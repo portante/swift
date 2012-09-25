@@ -45,7 +45,8 @@ from swift.container import server as container_server
 from swift.obj import server as object_server
 from swift.common import ring
 from swift.common.constraints import MAX_META_NAME_LENGTH, \
-    MAX_META_VALUE_LENGTH, MAX_META_COUNT, MAX_META_OVERALL_SIZE, MAX_FILE_SIZE
+    MAX_META_VALUE_LENGTH, MAX_META_COUNT, MAX_META_OVERALL_SIZE, \
+    MAX_FILE_SIZE, MAX_ACCOUNT_NAME_LENGTH, MAX_CONTAINER_NAME_LENGTH
 from swift.common.utils import mkdirs, normalize_timestamp, NullLogger
 from swift.common.wsgi import monkey_patch_mimetools
 
@@ -1168,6 +1169,7 @@ class TestObjectController(unittest.TestCase):
 
     def test_POST_meta_val_len(self):
         with save_globals():
+            limit = MAX_META_VALUE_LENGTH
             self.app.object_post_as_copy = False
             controller = proxy_server.ObjectController(self.app, 'account',
                 'container', 'object')
@@ -1175,42 +1177,44 @@ class TestObjectController(unittest.TestCase):
                 fake_http_connect(200, 200, 202, 202, 202)
                 #                 acct cont obj  obj  obj
             req = Request.blank('/a/c/o', {}, headers={
-                                            'Content-Type': 'foo/bar',
-                                            'X-Object-Meta-Foo': 'x' * 256})
+                                'Content-Type': 'foo/bar',
+                                'X-Object-Meta-Foo': 'x' * limit})
             self.app.update_request(req)
             res = controller.POST(req)
             self.assertEquals(res.status_int, 202)
             proxy_server.http_connect = fake_http_connect(202, 202, 202)
             req = Request.blank('/a/c/o', {}, headers={
-                                            'Content-Type': 'foo/bar',
-                                            'X-Object-Meta-Foo': 'x' * 257})
+                                'Content-Type': 'foo/bar',
+                                'X-Object-Meta-Foo': 'x' * (limit + 1)})
             self.app.update_request(req)
             res = controller.POST(req)
             self.assertEquals(res.status_int, 400)
 
     def test_POST_as_copy_meta_val_len(self):
         with save_globals():
+            limit = MAX_META_VALUE_LENGTH
             controller = proxy_server.ObjectController(self.app, 'account',
                 'container', 'object')
             proxy_server.http_connect = \
                 fake_http_connect(200, 200, 200, 200, 200, 202, 202, 202)
                 #                 acct cont objc objc objc obj  obj  obj
             req = Request.blank('/a/c/o', {}, headers={
-                                            'Content-Type': 'foo/bar',
-                                            'X-Object-Meta-Foo': 'x' * 256})
+                                'Content-Type': 'foo/bar',
+                                'X-Object-Meta-Foo': 'x' * limit})
             self.app.update_request(req)
             res = controller.POST(req)
             self.assertEquals(res.status_int, 202)
             proxy_server.http_connect = fake_http_connect(202, 202, 202)
             req = Request.blank('/a/c/o', {}, headers={
-                                            'Content-Type': 'foo/bar',
-                                            'X-Object-Meta-Foo': 'x' * 257})
+                                'Content-Type': 'foo/bar',
+                                'X-Object-Meta-Foo': 'x' * (limit + 1)})
             self.app.update_request(req)
             res = controller.POST(req)
             self.assertEquals(res.status_int, 400)
 
     def test_POST_meta_key_len(self):
         with save_globals():
+            limit = MAX_META_NAME_LENGTH
             self.app.object_post_as_copy = False
             controller = proxy_server.ObjectController(self.app, 'account',
                 'container', 'object')
@@ -1219,20 +1223,21 @@ class TestObjectController(unittest.TestCase):
                 #                 acct cont obj  obj  obj
             req = Request.blank('/a/c/o', {}, headers={
                 'Content-Type': 'foo/bar',
-                ('X-Object-Meta-' + 'x' * 128): 'x'})
+                ('X-Object-Meta-' + 'x' * limit): 'x'})
             self.app.update_request(req)
             res = controller.POST(req)
             self.assertEquals(res.status_int, 202)
             proxy_server.http_connect = fake_http_connect(202, 202, 202)
             req = Request.blank('/a/c/o', {}, headers={
                 'Content-Type': 'foo/bar',
-                ('X-Object-Meta-' + 'x' * 129): 'x'})
+                ('X-Object-Meta-' + 'x' * (limit + 1)): 'x'})
             self.app.update_request(req)
             res = controller.POST(req)
             self.assertEquals(res.status_int, 400)
 
     def test_POST_as_copy_meta_key_len(self):
         with save_globals():
+            limit = MAX_META_NAME_LENGTH
             controller = proxy_server.ObjectController(self.app, 'account',
                 'container', 'object')
             proxy_server.http_connect = \
@@ -1240,24 +1245,25 @@ class TestObjectController(unittest.TestCase):
                 #                 acct cont objc objc objc obj  obj  obj
             req = Request.blank('/a/c/o', {}, headers={
                 'Content-Type': 'foo/bar',
-                ('X-Object-Meta-' + 'x' * 128): 'x'})
+                ('X-Object-Meta-' + 'x' * limit): 'x'})
             self.app.update_request(req)
             res = controller.POST(req)
             self.assertEquals(res.status_int, 202)
             proxy_server.http_connect = fake_http_connect(202, 202, 202)
             req = Request.blank('/a/c/o', {}, headers={
                 'Content-Type': 'foo/bar',
-                ('X-Object-Meta-' + 'x' * 129): 'x'})
+                ('X-Object-Meta-' + 'x' * (limit + 1)): 'x'})
             self.app.update_request(req)
             res = controller.POST(req)
             self.assertEquals(res.status_int, 400)
 
     def test_POST_meta_count(self):
         with save_globals():
+            limit = MAX_META_COUNT
             controller = proxy_server.ObjectController(self.app, 'account',
                 'container', 'object')
             headers = dict(
-                (('X-Object-Meta-' + str(i), 'a') for i in xrange(91)))
+                (('X-Object-Meta-' + str(i), 'a') for i in xrange(limit + 1)))
             headers.update({'Content-Type': 'foo/bar'})
             proxy_server.http_connect = fake_http_connect(202, 202, 202)
             req = Request.blank('/a/c/o', {}, headers=headers)
@@ -1267,10 +1273,13 @@ class TestObjectController(unittest.TestCase):
 
     def test_POST_meta_size(self):
         with save_globals():
+            limit = MAX_META_OVERALL_SIZE
             controller = proxy_server.ObjectController(self.app, 'account',
                 'container', 'object')
+            count = limit / 256  # enough to cause the limit to be reched
             headers = dict(
-                (('X-Object-Meta-' + str(i), 'a' * 256) for i in xrange(1000)))
+                (('X-Object-Meta-' + str(i), 'a' * 256)
+                    for i in xrange(count + 1)))
             headers.update({'Content-Type': 'foo/bar'})
             proxy_server.http_connect = fake_http_connect(202, 202, 202)
             req = Request.blank('/a/c/o', {}, headers=headers)
@@ -3206,13 +3215,14 @@ class TestContainerController(unittest.TestCase):
 
     def test_PUT_max_container_name_length(self):
         with save_globals():
+            limit = MAX_CONTAINER_NAME_LENGTH
             controller = proxy_server.ContainerController(self.app, 'account',
-                                                              '1' * 256)
+                                                          '1' * limit)
             self.assert_status_map(controller.PUT,
                                    (200, 200, 200, 201, 201, 201), 201,
                                    missing_container=True)
             controller = proxy_server.ContainerController(self.app, 'account',
-                                                              '2' * 257)
+                                                          '2' * (limit + 1))
             self.assert_status_map(controller.PUT, (201, 201, 201), 400,
                                    missing_container=True)
 
@@ -3813,9 +3823,11 @@ class TestAccountController(unittest.TestCase):
     def test_PUT_max_account_name_length(self):
         with save_globals():
             self.app.allow_account_management = True
-            controller = proxy_server.AccountController(self.app, '1' * 256)
+            limit = MAX_ACCOUNT_NAME_LENGTH
+            controller = proxy_server.AccountController(self.app, '1' * limit)
             self.assert_status_map(controller.PUT, (201, 201, 201), 201)
-            controller = proxy_server.AccountController(self.app, '2' * 257)
+            controller = proxy_server.AccountController(
+                self.app, '2' * (limit + 1))
             self.assert_status_map(controller.PUT, (201, 201, 201), 400)
 
     def test_PUT_connect_exceptions(self):

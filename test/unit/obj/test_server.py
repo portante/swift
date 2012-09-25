@@ -38,6 +38,7 @@ from swift.common import utils
 from swift.common.utils import hash_path, mkdirs, normalize_timestamp, \
                                NullLogger, storage_directory
 from swift.common.exceptions import DiskFileNotExist
+from swift.common import constraints
 from swift.obj import replicator
 from eventlet import tpool
 
@@ -1355,7 +1356,9 @@ class TestObjectController(unittest.TestCase):
 
     def test_max_object_name_length(self):
         timestamp = normalize_timestamp(time())
-        req = Request.blank('/sda1/p/a/c/' + ('1' * 1024),
+        max_name_len = constraints.MAX_OBJECT_NAME_LENGTH
+        req = Request.blank('/sda1/p/a/c/' + ('1' * max_name_len),
+
                 environ={'REQUEST_METHOD': 'PUT'},
                 headers={'X-Timestamp': timestamp,
                          'Content-Length': '4',
@@ -1363,7 +1366,7 @@ class TestObjectController(unittest.TestCase):
         req.body = 'DATA'
         resp = self.object_controller.PUT(req)
         self.assertEquals(resp.status_int, 201)
-        req = Request.blank('/sda1/p/a/c/' + ('2' * 1025),
+        req = Request.blank('/sda1/p/a/c/' + ('2' * (max_name_len + 1)),
                 environ={'REQUEST_METHOD': 'PUT'},
                 headers={'X-Timestamp': timestamp,
                          'Content-Length': '4',
