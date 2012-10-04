@@ -14,29 +14,58 @@
 # limitations under the License.
 
 import os
+from ConfigParser import ConfigParser, NoSectionError, NoOptionError, \
+    RawConfigParser
 
 from webob.exc import HTTPBadRequest, HTTPLengthRequired, \
     HTTPRequestEntityTooLarge
 
+constraints_conf = ConfigParser()
+constraints_conf.read('/etc/swift/swift.conf')
+
+
+def constraints_conf_int(name, default):
+    try:
+        return int(constraints_conf.get('swift-constraints', name))
+    except (NoSectionError, NoOptionError):
+        return default
+
 
 #: Max file size allowed for objects
 MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024 + 2
+MAX_FILE_SIZE = constraints_conf_int('max_file_size',
+                                     5368709122)  # 5 * 1024 * 1024 * 1024 + 2
 #: Max length of the name of a key for metadata
 MAX_META_NAME_LENGTH = 128
+MAX_META_NAME_LENGTH = constraints_conf_int('max_meta_name_length', 128)
 #: Max length of the value of a key for metadata
 MAX_META_VALUE_LENGTH = 256
+MAX_META_VALUE_LENGTH = constraints_conf_int('max_meta_value_length', 256)
 #: Max number of metadata items
 MAX_META_COUNT = 90
+MAX_META_COUNT = constraints_conf_int('max_meta_count', 90)
 #: Max overall size of metadata
 MAX_META_OVERALL_SIZE = 4096
+MAX_META_OVERALL_SIZE = constraints_conf_int('max_meta_overall_size', 4096)
 #: Max object name length
 MAX_OBJECT_NAME_LENGTH = 1024
+MAX_OBJECT_NAME_LENGTH = constraints_conf_int('max_object_name_length', 1024)
 #: Max object list length of a get request for a container
 CONTAINER_LISTING_LIMIT = 10000
+CONTAINER_LISTING_LIMIT = constraints_conf_int('container_listing_limit',
+                                               10000)
 #: Max container list length of a get request for an account
 ACCOUNT_LISTING_LIMIT = 10000
 MAX_ACCOUNT_NAME_LENGTH = 256
 MAX_CONTAINER_NAME_LENGTH = 256
+ACCOUNT_LISTING_LIMIT = constraints_conf_int('account_listing_limit', 10000)
+#: Max account name length
+MAX_ACCOUNT_NAME_LENGTH = constraints_conf_int('max_account_name_length', 256)
+#: Max container name length
+MAX_CONTAINER_NAME_LENGTH = constraints_conf_int('max_container_name_length',
+                                                 256)
+
+
 #: Query string format= values to their corresponding content-type values
 FORMAT2CONTENT_TYPE = {'plain': 'text/plain', 'json': 'application/json',
                        'xml': 'application/xml'}
