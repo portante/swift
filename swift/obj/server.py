@@ -480,7 +480,7 @@ class ObjectController(object):
         host = partition = contdevice = None
         headers_out = {'x-timestamp': headers_in['x-timestamp'],
                        'x-trans-id': headers_in.get('x-trans-id', '-'),
-                       'referer': referer,}
+                       'referer': referer}
         if op != 'DELETE':
             host = headers_in.get('X-Delete-At-Host', None)
             partition = headers_in.get('X-Delete-At-Partition', None)
@@ -546,7 +546,8 @@ class ObjectController(object):
         if old_delete_at != new_delete_at:
             if new_delete_at:
                 self.delete_at_update('PUT', new_delete_at, account, container,
-                                      obj, request.headers, device, request.url)
+                                      obj, request.headers, device,
+                                      request.url)
             if old_delete_at:
                 self.delete_at_update('DELETE', old_delete_at, account,
                                       container, obj, request.headers, device,
@@ -654,7 +655,7 @@ class ObjectController(object):
                  'x-content-type': file.metadata['Content-Type'],
                  'x-timestamp': file.metadata['X-Timestamp'],
                  'x-etag': file.metadata['ETag'],
-                 'referer': request.url,},
+                 'referer': request.url},
                 device)
         resp = HTTPCreated(request=request, etag=etag)
         self.logger.timing_since('PUT.timing', start_time)
@@ -845,7 +846,7 @@ class ObjectController(object):
                 orig_timestamp < request.headers['x-timestamp']:
             self.container_update('DELETE', account, container, obj,
                 request.headers, {'x-timestamp': metadata['X-Timestamp'],
-                'referer': request.url,}, device)
+                'referer': request.url}, device)
         resp = response_class(request=request)
         self.logger.timing_since('DELETE.timing', start_time)
         return resp

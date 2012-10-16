@@ -108,14 +108,17 @@ class Controller(object):
                            if k.lower() in self.pass_through_headers or
                               k.lower().startswith(x_meta))
 
-    def generate_request_headers(self, orig_req, additional=None):
-        headers = {'x-trans-id' : self.trans_id,
+    def generate_request_headers(self, orig_req, additional=None,
+                                 transfer=False):
+        headers = {'x-trans-id': self.trans_id,
                    'X-Timestamp': normalize_timestamp(time.time()),
-                   'Connection' : 'close',
-                   'user-agent' : 'proxy-server %s' % os.getpid(),
-                   'referer'    : orig_req.url}
+                   'Connection': 'close',
+                   'user-agent': 'proxy-server %s' % os.getpid(),
+                   'referer': orig_req.url}
         if additional:
             headers.update(additional)
+        if transfer:
+            self.transfer_headers(orig_req.headers, headers)
         return headers
 
     def error_increment(self, node):
@@ -267,7 +270,8 @@ class Controller(object):
             return partition, nodes, container_count
         return None, None, None
 
-    def container_info(self, account, container, req, account_autocreate=False):
+    def container_info(self, account, container, req,
+                       account_autocreate=False):
         """
         Get container information and thusly verify container existance.
         This will also make a call to account_info to verify that the
@@ -296,7 +300,8 @@ class Controller(object):
                             versions
                 elif status == HTTP_NOT_FOUND:
                     return None, None, None, None, None, None
-        if not self.account_info(account, req, autocreate=account_autocreate)[1]:
+        if not self.account_info(account, req,
+                                 autocreate=account_autocreate)[1]:
             return None, None, None, None, None, None
         result_code = 0
         read_acl = None

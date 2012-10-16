@@ -141,8 +141,7 @@ class ContainerController(Controller):
             nheaders = self.generate_request_headers(req, {
                         'X-Account-Host': '%(ip)s:%(port)s' % account,
                         'X-Account-Partition': account_partition,
-                        'X-Account-Device': account['device'],})
-            self.transfer_headers(req.headers, nheaders)
+                        'X-Account-Device': account['device']}, transfer=True)
             headers.append(nheaders)
         if self.app.memcache:
             cache_key = get_container_memcache_key(self.account_name,
@@ -166,8 +165,7 @@ class ContainerController(Controller):
             return HTTPNotFound(request=req)
         container_partition, containers = self.app.container_ring.get_nodes(
             self.account_name, self.container_name)
-        headers = self.generate_request_headers(req)
-        self.transfer_headers(req.headers, headers)
+        headers = self.generate_request_headers(req, transfer=True)
         if self.app.memcache:
             cache_key = get_container_memcache_key(self.account_name,
                                                    self.container_name)
@@ -191,7 +189,7 @@ class ContainerController(Controller):
             headers.append(self.generate_request_headers(req, {
                            'X-Account-Host': '%(ip)s:%(port)s' % account,
                            'X-Account-Partition': account_partition,
-                           'X-Account-Device': account['device'],}))
+                           'X-Account-Device': account['device']}))
         if self.app.memcache:
             cache_key = get_container_memcache_key(self.account_name,
                                                    self.container_name)

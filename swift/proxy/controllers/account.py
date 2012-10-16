@@ -85,8 +85,7 @@ class AccountController(Controller):
             return resp
         account_partition, accounts = \
             self.app.account_ring.get_nodes(self.account_name)
-        headers = self.generate_request_headers(req)
-        self.transfer_headers(req.headers, headers)
+        headers = self.generate_request_headers(req, transfer=True)
         if self.app.memcache:
             self.app.memcache.delete('account%s' % req.path_info.rstrip('/'))
         resp = self.make_requests(req, self.app.account_ring,
@@ -101,8 +100,7 @@ class AccountController(Controller):
             return error_response
         account_partition, accounts = \
             self.app.account_ring.get_nodes(self.account_name)
-        headers = self.generate_request_headers(req)
-        self.transfer_headers(req.headers, headers)
+        headers = self.generate_request_headers(req, transfer=True)
         if self.app.memcache:
             self.app.memcache.delete('account%s' % req.path_info.rstrip('/'))
         resp = self.make_requests(req, self.app.account_ring,

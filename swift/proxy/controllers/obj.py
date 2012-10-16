@@ -414,8 +414,8 @@ class ObjectController(Controller):
             if error_response:
                 return error_response
             container_partition, containers, _junk, req.acl, _junk, _junk = \
-                self.container_info(self.account_name, self.container_name, req,
-                    account_autocreate=self.app.account_autocreate)
+                self.container_info(self.account_name, self.container_name,
+                    req, account_autocreate=self.app.account_autocreate)
             if 'swift.authorize' in req.environ:
                 aresp = req.environ['swift.authorize'](req)
                 if aresp:
