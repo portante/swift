@@ -318,7 +318,7 @@ class Controller(object):
                            if k.lower() in self.pass_through_headers or
                               k.lower().startswith(x_meta))
 
-    def generate_request_headers(self, orig_req, additional=None):
+    def generate_request_headers(self, orig_req, additional=None, transfer=False):
         headers = {'x-trans-id' : self.trans_id,
                    'X-Timestamp': normalize_timestamp(time.time()),
                    'Connection' : 'close',
@@ -326,6 +326,8 @@ class Controller(object):
                    'referer'    : orig_req.url}
         if additional:
             headers.update(additional)
+        if transfer:
+            self.transfer_headers(orig_req.headers, headers)
         return headers
 
     def error_increment(self, node):
@@ -1532,11 +1534,13 @@ class ContainerController(Controller):
             self.account_name, self.container_name)
         headers = []
         for account in accounts:
-            nheaders = self.generate_request_headers(req,
-                                                {'X-Account-Host': '%(ip)s:%(port)s' % account,
-                                                 'X-Account-Partition': account_partition,
-                                                 'X-Account-Device': account['device'],})
-            self.transfer_headers(req.headers, nheaders)
+            additional = {
+                'X-Account-Host': '%(ip)s:%(port)s' % account,
+                'X-Account-Partition': account_partition,
+                'X-Account-Device': account['device'],
+                }
+            nheaders = self.generate_request_headers(req, additional,
+                                                     transfer=True)
             headers.append(nheaders)
         if self.app.memcache:
             cache_key = get_container_memcache_key(self.account_name,
@@ -1559,8 +1563,7 @@ class ContainerController(Controller):
             return HTTPNotFound(request=req)
         container_partition, containers = self.app.container_ring.get_nodes(
             self.account_name, self.container_name)
-        headers = self.generate_request_headers(req)
-        self.transfer_headers(req.headers, headers)
+        headers = self.generate_request_headers(req, transfer=True)
         if self.app.memcache:
             cache_key = get_container_memcache_key(self.account_name,
                                                    self.container_name)
@@ -1642,8 +1645,7 @@ class AccountController(Controller):
             return resp
         account_partition, accounts = \
             self.app.account_ring.get_nodes(self.account_name)
-        headers = self.generate_request_headers(req)
-        self.transfer_headers(req.headers, headers)
+        headers = self.generate_request_headers(req, transfer=True)
         if self.app.memcache:
             self.app.memcache.delete('account%s' % req.path_info.rstrip('/'))
         return self.make_requests(req, self.app.account_ring,
@@ -1657,8 +1659,7 @@ class AccountController(Controller):
             return error_response
         account_partition, accounts = \
             self.app.account_ring.get_nodes(self.account_name)
-        headers = self.generate_request_headers(req)
-        self.transfer_headers(req.headers, headers)
+        headers = self.generate_request_headers(req, transfer=True)
         if self.app.memcache:
             self.app.memcache.delete('account%s' % req.path_info.rstrip('/'))
         resp = self.make_requests(req, self.app.account_ring,
