@@ -57,9 +57,7 @@ class AccountController(Controller):
                 resp.body = 'Account name length of %d longer than %d' % \
                             (len(self.account_name), MAX_ACCOUNT_NAME_LENGTH)
                 return resp
-            headers = {'X-Timestamp': normalize_timestamp(time.time()),
-                       'X-Trans-Id': self.trans_id,
-                       'Connection': 'close'}
+            headers = self.generate_request_headers(req)
             resp = self.make_requests(
                 Request.blank('/v1/' + self.account_name),
                 self.app.account_ring, partition, 'PUT',
@@ -87,9 +85,7 @@ class AccountController(Controller):
             return resp
         account_partition, accounts = \
             self.app.account_ring.get_nodes(self.account_name)
-        headers = {'X-Timestamp': normalize_timestamp(time.time()),
-                   'x-trans-id': self.trans_id,
-                   'Connection': 'close'}
+        headers = self.generate_request_headers(req)
         self.transfer_headers(req.headers, headers)
         if self.app.memcache:
             self.app.memcache.delete('account%s' % req.path_info.rstrip('/'))
@@ -105,9 +101,7 @@ class AccountController(Controller):
             return error_response
         account_partition, accounts = \
             self.app.account_ring.get_nodes(self.account_name)
-        headers = {'X-Timestamp': normalize_timestamp(time.time()),
-                   'X-Trans-Id': self.trans_id,
-                   'Connection': 'close'}
+        headers = self.generate_request_headers(req)
         self.transfer_headers(req.headers, headers)
         if self.app.memcache:
             self.app.memcache.delete('account%s' % req.path_info.rstrip('/'))
@@ -137,9 +131,7 @@ class AccountController(Controller):
             return HTTPMethodNotAllowed(request=req)
         account_partition, accounts = \
             self.app.account_ring.get_nodes(self.account_name)
-        headers = {'X-Timestamp': normalize_timestamp(time.time()),
-                   'X-Trans-Id': self.trans_id,
-                   'Connection': 'close'}
+        headers = self.generate_request_headers(req)
         if self.app.memcache:
             self.app.memcache.delete('account%s' % req.path_info.rstrip('/'))
         resp = self.make_requests(req, self.app.account_ring,

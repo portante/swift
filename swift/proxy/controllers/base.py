@@ -24,6 +24,7 @@
 #   These shenanigans are to ensure all related objects can be garbage
 # collected. We've seen objects hang around forever otherwise.
 
+import os
 import time
 import functools
 
@@ -107,6 +108,16 @@ class Controller(object):
                            if k.lower() in self.pass_through_headers or
                               k.lower().startswith(x_meta))
 
+    def generate_request_headers(self, orig_req, additional=None):
+        headers = {'x-trans-id' : self.trans_id,
+                   'X-Timestamp': normalize_timestamp(time.time()),
+                   'Connection' : 'close',
+                   'user-agent' : 'proxy-server %s' % os.getpid(),
+                   'referer'    : orig_req.url}
+        if additional:
+            headers.update(additional)
+        return headers
+
     def error_increment(self, node):
         """
         Handles incrementing error counts when talking to nodes.
@@ -172,7 +183,7 @@ class Controller(object):
         node['errors'] = self.app.error_suppression_limit + 1
         node['last_error'] = time.time()
 
-    def account_info(self, account, autocreate=False):
+    def account_info(self, account, req, autocreate=False):
         """
         Get account information, and also verify that the account exists.
 
@@ -199,7 +210,7 @@ class Controller(object):
         container_count = 0
         attempts_left = len(nodes)
         path = '/%s' % account
-        headers = {'x-trans-id': self.trans_id, 'Connection': 'close'}
+        headers = self.generate_request_headers(req)
         iternodes = self.iter_nodes(partition, nodes, self.app.account_ring)
         while attempts_left > 0:
             try:
@@ -235,9 +246,7 @@ class Controller(object):
         if result_code == HTTP_NOT_FOUND and autocreate:
             if len(account) > MAX_ACCOUNT_NAME_LENGTH:
                 return None, None, None
-            headers = {'X-Timestamp': normalize_timestamp(time.time()),
-                       'X-Trans-Id': self.trans_id,
-                       'Connection': 'close'}
+            headers = self.generate_request_headers(req)
             resp = self.make_requests(Request.blank('/v1' + path),
                 self.app.account_ring, partition, 'PUT',
                 path, [headers] * len(nodes))
@@ -258,7 +267,7 @@ class Controller(object):
             return partition, nodes, container_count
         return None, None, None
 
-    def container_info(self, account, container, account_autocreate=False):
+    def container_info(self, account, container, req, account_autocreate=False):
         """
         Get container information and thusly verify container existance.
         This will also make a call to account_info to verify that the
@@ -287,7 +296,7 @@ class Controller(object):
                             versions
                 elif status == HTTP_NOT_FOUND:
                     return None, None, None, None, None, None
-        if not self.account_info(account, autocreate=account_autocreate)[1]:
+        if not self.account_info(account, req, autocreate=account_autocreate)[1]:
             return None, None, None, None, None, None
         result_code = 0
         read_acl = None
@@ -296,7 +305,7 @@ class Controller(object):
         container_size = None
         versions = None
         attempts_left = len(nodes)
-        headers = {'x-trans-id': self.trans_id, 'Connection': 'close'}
+        headers = self.generate_request_headers(req)
         iternodes = self.iter_nodes(partition, nodes, self.app.container_ring)
         while attempts_left > 0:
             try:
@@ -585,8 +594,8 @@ class Controller(object):
                 continue
             try:
                 with ConnectionTimeout(self.app.conn_timeout):
-                    headers = dict(req.headers)
-                    headers['Connection'] = 'close'
+                    headers = self.generate_request_headers(req,
+                                                            dict(req.headers))
                     conn = http_connect(node['ip'], node['port'],
                         node['device'], partition, req.method, path,
                         headers=headers,

@@ -279,7 +279,7 @@ class ObjectController(Controller):
     def GETorHEAD(self, req):
         """Handle HTTP GET or HEAD requests."""
         _junk, _junk, req.acl, _junk, _junk, object_versions = \
-            self.container_info(self.account_name, self.container_name)
+            self.container_info(self.account_name, self.container_name, req)
         if 'swift.authorize' in req.environ:
             aresp = req.environ['swift.authorize'](req)
             if aresp:
@@ -414,7 +414,7 @@ class ObjectController(Controller):
             if error_response:
                 return error_response
             container_partition, containers, _junk, req.acl, _junk, _junk = \
-                self.container_info(self.account_name, self.container_name,
+                self.container_info(self.account_name, self.container_name, req,
                     account_autocreate=self.app.account_autocreate)
             if 'swift.authorize' in req.environ:
                 aresp = req.environ['swift.authorize'](req)
@@ -445,8 +445,8 @@ class ObjectController(Controller):
             req.headers['X-Timestamp'] = normalize_timestamp(time.time())
             headers = []
             for container in containers:
-                nheaders = dict(req.headers.iteritems())
-                nheaders['Connection'] = 'close'
+                nheaders = self.generate_request_headers(
+                    req, dict(req.headers.iteritems()))
                 nheaders['X-Container-Host'] = '%(ip)s:%(port)s' % container
                 nheaders['X-Container-Partition'] = container_partition
                 nheaders['X-Container-Device'] = container['device']
@@ -500,7 +500,7 @@ class ObjectController(Controller):
         """HTTP PUT request handler."""
         (container_partition, containers, _junk, req.acl,
          req.environ['swift_sync_key'], object_versions) = \
-            self.container_info(self.account_name, self.container_name,
+            self.container_info(self.account_name, self.container_name, req,
                 account_autocreate=self.app.account_autocreate)
         if 'swift.authorize' in req.environ:
             aresp = req.environ['swift.authorize'](req)
@@ -659,8 +659,8 @@ class ObjectController(Controller):
         node_iter = self.iter_nodes(partition, nodes, self.app.object_ring)
         pile = GreenPile(len(nodes))
         for container in containers:
-            nheaders = dict(req.headers.iteritems())
-            nheaders['Connection'] = 'close'
+            nheaders = self.generate_request_headers(
+                req, dict(req.headers.iteritems()))
             nheaders['X-Container-Host'] = '%(ip)s:%(port)s' % container
             nheaders['X-Container-Partition'] = container_partition
             nheaders['X-Container-Device'] = container['device']
@@ -778,7 +778,7 @@ class ObjectController(Controller):
         """HTTP DELETE request handler."""
         (container_partition, containers, _junk, req.acl,
          req.environ['swift_sync_key'], object_versions) = \
-            self.container_info(self.account_name, self.container_name)
+            self.container_info(self.account_name, self.container_name, req)
         if object_versions:
             # this is a version manifest and needs to be handled differently
             lcontainer = object_versions.split('/')[0]
@@ -826,7 +826,8 @@ class ObjectController(Controller):
                 new_del_req = Request.blank(copy_path, environ=req.environ)
                 (container_partition, containers,
                     _junk, new_del_req.acl, _junk, _junk) = \
-                    self.container_info(self.account_name, self.container_name)
+                    self.container_info(self.account_name, self.container_name,
+                                        req)
                 new_del_req.path_info = copy_path
                 req = new_del_req
         if 'swift.authorize' in req.environ:
@@ -850,8 +851,8 @@ class ObjectController(Controller):
             req.headers['X-Timestamp'] = normalize_timestamp(time.time())
         headers = []
         for container in containers:
-            nheaders = dict(req.headers.iteritems())
-            nheaders['Connection'] = 'close'
+            nheaders = self.generate_request_headers(
+                req, dict(req.headers.iteritems()))
             nheaders['X-Container-Host'] = '%(ip)s:%(port)s' % container
             nheaders['X-Container-Partition'] = container_partition
             nheaders['X-Container-Device'] = container['device']

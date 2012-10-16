@@ -65,7 +65,7 @@ class ContainerController(Controller):
 
     def GETorHEAD(self, req):
         """Handler for HTTP GET/HEAD requests."""
-        if not self.account_info(self.account_name)[1]:
+        if not self.account_info(self.account_name, req)[1]:
             return HTTPNotFound(request=req)
         part, nodes = self.app.container_ring.get_nodes(
                         self.account_name, self.container_name)
@@ -123,7 +123,7 @@ class ContainerController(Controller):
                         (len(self.container_name), MAX_CONTAINER_NAME_LENGTH)
             return resp
         account_partition, accounts, container_count = \
-            self.account_info(self.account_name,
+            self.account_info(self.account_name, req,
                               autocreate=self.app.account_autocreate)
         if self.app.max_containers_per_account > 0 and \
                 container_count >= self.app.max_containers_per_account and \
@@ -138,12 +138,10 @@ class ContainerController(Controller):
             self.account_name, self.container_name)
         headers = []
         for account in accounts:
-            nheaders = {'X-Timestamp': normalize_timestamp(time.time()),
-                        'x-trans-id': self.trans_id,
+            nheaders = self.generate_request_headers(req, {
                         'X-Account-Host': '%(ip)s:%(port)s' % account,
                         'X-Account-Partition': account_partition,
-                        'X-Account-Device': account['device'],
-                        'Connection': 'close'}
+                        'X-Account-Device': account['device'],})
             self.transfer_headers(req.headers, nheaders)
             headers.append(nheaders)
         if self.app.memcache:
@@ -162,15 +160,13 @@ class ContainerController(Controller):
         if error_response:
             return error_response
         account_partition, accounts, container_count = \
-            self.account_info(self.account_name,
+            self.account_info(self.account_name, req,
                               autocreate=self.app.account_autocreate)
         if not accounts:
             return HTTPNotFound(request=req)
         container_partition, containers = self.app.container_ring.get_nodes(
             self.account_name, self.container_name)
-        headers = {'X-Timestamp': normalize_timestamp(time.time()),
-                   'x-trans-id': self.trans_id,
-                   'Connection': 'close'}
+        headers = self.generate_request_headers(req)
         self.transfer_headers(req.headers, headers)
         if self.app.memcache:
             cache_key = get_container_memcache_key(self.account_name,
@@ -185,19 +181,17 @@ class ContainerController(Controller):
     def DELETE(self, req):
         """HTTP DELETE request handler."""
         account_partition, accounts, container_count = \
-            self.account_info(self.account_name)
+            self.account_info(self.account_name, req)
         if not accounts:
             return HTTPNotFound(request=req)
         container_partition, containers = self.app.container_ring.get_nodes(
             self.account_name, self.container_name)
         headers = []
         for account in accounts:
-            headers.append({'X-Timestamp': normalize_timestamp(time.time()),
-                           'X-Trans-Id': self.trans_id,
+            headers.append(self.generate_request_headers(req, {
                            'X-Account-Host': '%(ip)s:%(port)s' % account,
                            'X-Account-Partition': account_partition,
-                           'X-Account-Device': account['device'],
-                           'Connection': 'close'})
+                           'X-Account-Device': account['device'],}))
         if self.app.memcache:
             cache_key = get_container_memcache_key(self.account_name,
                                                    self.container_name)
