@@ -318,6 +318,16 @@ class Controller(object):
                            if k.lower() in self.pass_through_headers or
                               k.lower().startswith(x_meta))
 
+    def generate_request_headers(self, orig_req, additional=None):
+        headers = {'x-trans-id' : self.trans_id,
+                   'X-Timestamp': normalize_timestamp(time.time()),
+                   'Connection' : 'close',
+                   'user-agent' : 'proxy-server %s' % os.getpid(),
+                   'referer'    : orig_req.url}
+        if additional:
+            headers.update(additional)
+        return headers
+
     def error_increment(self, node):
         """
         Handles incrementing error counts when talking to nodes.
@@ -383,7 +393,7 @@ class Controller(object):
         node['errors'] = self.app.error_suppression_limit + 1
         node['last_error'] = time.time()
 
-    def account_info(self, account, autocreate=False):
+    def account_info(self, account, req, autocreate=False):
         """
         Get account information, and also verify that the account exists.
 
@@ -410,7 +420,7 @@ class Controller(object):
         container_count = 0
         attempts_left = self.app.account_ring.replica_count
         path = '/%s' % account
-        headers = {'x-trans-id': self.trans_id, 'Connection': 'close'}
+        headers = self.generate_request_headers(req)
         for node in self.iter_nodes(partition, nodes, self.app.account_ring):
             try:
                 with ConnectionTimeout(self.app.conn_timeout):
@@ -443,9 +453,7 @@ class Controller(object):
         if result_code == 404 and autocreate:
             if len(account) > MAX_ACCOUNT_NAME_LENGTH:
                 return None, None, None
-            headers = {'X-Timestamp': normalize_timestamp(time.time()),
-                       'X-Trans-Id': self.trans_id,
-                       'Connection': 'close'}
+            headers = self.generate_request_headers(req)
             resp = self.make_requests(Request.blank('/v1' + path),
                 self.app.account_ring, partition, 'PUT',
                 path, [headers] * len(nodes))
@@ -464,7 +472,7 @@ class Controller(object):
             return partition, nodes, container_count
         return None, None, None
 
-    def container_info(self, account, container, account_autocreate=False):
+    def container_info(self, account, container, req, account_autocreate=False):
         """
         Get container information and thusly verify container existance.
         This will also make a call to account_info to verify that the
@@ -491,7 +499,7 @@ class Controller(object):
                     return partition, nodes, read_acl, write_acl, sync_key
                 elif status == 404:
                     return None, None, None, None, None
-        if not self.account_info(account, autocreate=account_autocreate)[1]:
+        if not self.account_info(account, req, autocreate=account_autocreate)[1]:
             return None, None, None, None, None
         result_code = 0
         read_acl = None
@@ -499,7 +507,7 @@ class Controller(object):
         sync_key = None
         container_size = None
         attempts_left = self.app.container_ring.replica_count
-        headers = {'x-trans-id': self.trans_id, 'Connection': 'close'}
+        headers = self.generate_request_headers(req)
         for node in self.iter_nodes(partition, nodes, self.app.container_ring):
             try:
                 with ConnectionTimeout(self.app.conn_timeout):
@@ -762,8 +770,7 @@ class Controller(object):
                 continue
             try:
                 with ConnectionTimeout(self.app.conn_timeout):
-                    headers = dict(req.headers)
-                    headers['Connection'] = 'close'
+                    headers = self.generate_request_headers(req, dict(req.headers))
                     conn = http_connect(node['ip'], node['port'],
                         node['device'], partition, req.method, path,
                         headers=headers,
@@ -864,7 +871,7 @@ class ObjectController(Controller):
         """Handle HTTP GET or HEAD requests."""
         if 'swift.authorize' in req.environ:
             req.acl = \
-                self.container_info(self.account_name, self.container_name)[2]
+                self.container_info(self.account_name, self.container_name, req)[2]
             aresp = req.environ['swift.authorize'](req)
             if aresp:
                 return aresp
@@ -1042,7 +1049,7 @@ class ObjectController(Controller):
             if error_response:
                 return error_response
             container_partition, containers, _junk, req.acl, _junk = \
-                self.container_info(self.account_name, self.container_name,
+                self.container_info(self.account_name, self.container_name, req,
                     account_autocreate=self.app.account_autocreate)
             if 'swift.authorize' in req.environ:
                 aresp = req.environ['swift.authorize'](req)
@@ -1073,8 +1080,7 @@ class ObjectController(Controller):
             req.headers['X-Timestamp'] = normalize_timestamp(time.time())
             headers = []
             for container in containers:
-                nheaders = dict(req.headers.iteritems())
-                nheaders['Connection'] = 'close'
+                nheaders = self.generate_request_headers(req, dict(req.headers.iteritems()))
                 nheaders['X-Container-Host'] = '%(ip)s:%(port)s' % container
                 nheaders['X-Container-Partition'] = container_partition
                 nheaders['X-Container-Device'] = container['device']
@@ -1125,7 +1131,7 @@ class ObjectController(Controller):
         """HTTP PUT request handler."""
         (container_partition, containers, _junk, req.acl,
          req.environ['swift_sync_key']) = \
-            self.container_info(self.account_name, self.container_name,
+            self.container_info(self.account_name, self.container_name, req,
                 account_autocreate=self.app.account_autocreate)
         if 'swift.authorize' in req.environ:
             aresp = req.environ['swift.authorize'](req)
@@ -1248,8 +1254,7 @@ class ObjectController(Controller):
         node_iter = self.iter_nodes(partition, nodes, self.app.object_ring)
         pile = GreenPile(len(nodes))
         for container in containers:
-            nheaders = dict(req.headers.iteritems())
-            nheaders['Connection'] = 'close'
+            nheaders = self.generate_request_headers(req, dict(req.headers.iteritems()))
             nheaders['X-Container-Host'] = '%(ip)s:%(port)s' % container
             nheaders['X-Container-Partition'] = container_partition
             nheaders['X-Container-Device'] = container['device']
@@ -1368,7 +1373,7 @@ class ObjectController(Controller):
         """HTTP DELETE request handler."""
         (container_partition, containers, _junk, req.acl,
          req.environ['swift_sync_key']) = \
-            self.container_info(self.account_name, self.container_name)
+            self.container_info(self.account_name, self.container_name, req)
         if 'swift.authorize' in req.environ:
             aresp = req.environ['swift.authorize'](req)
             if aresp:
@@ -1390,8 +1395,7 @@ class ObjectController(Controller):
             req.headers['X-Timestamp'] = normalize_timestamp(time.time())
         headers = []
         for container in containers:
-            nheaders = dict(req.headers.iteritems())
-            nheaders['Connection'] = 'close'
+            nheaders = self.generate_request_headers(req, dict(req.headers.iteritems()))
             nheaders['X-Container-Host'] = '%(ip)s:%(port)s' % container
             nheaders['X-Container-Partition'] = container_partition
             nheaders['X-Container-Device'] = container['device']
@@ -1456,7 +1460,7 @@ class ContainerController(Controller):
 
     def GETorHEAD(self, req):
         """Handler for HTTP GET/HEAD requests."""
-        if not self.account_info(self.account_name)[1]:
+        if not self.account_info(self.account_name, req)[1]:
             return HTTPNotFound(request=req)
         part, nodes = self.app.container_ring.get_nodes(
                         self.account_name, self.container_name)
@@ -1513,7 +1517,7 @@ class ContainerController(Controller):
                         (len(self.container_name), MAX_CONTAINER_NAME_LENGTH)
             return resp
         account_partition, accounts, container_count = \
-            self.account_info(self.account_name,
+            self.account_info(self.account_name, req,
                               autocreate=self.app.account_autocreate)
         if self.app.max_containers_per_account > 0 and \
                 container_count >= self.app.max_containers_per_account and \
@@ -1528,12 +1532,10 @@ class ContainerController(Controller):
             self.account_name, self.container_name)
         headers = []
         for account in accounts:
-            nheaders = {'X-Timestamp': normalize_timestamp(time.time()),
-                        'x-trans-id': self.trans_id,
-                        'X-Account-Host': '%(ip)s:%(port)s' % account,
-                        'X-Account-Partition': account_partition,
-                        'X-Account-Device': account['device'],
-                        'Connection': 'close'}
+            nheaders = self.generate_request_headers(req,
+                                                {'X-Account-Host': '%(ip)s:%(port)s' % account,
+                                                 'X-Account-Partition': account_partition,
+                                                 'X-Account-Device': account['device'],})
             self.transfer_headers(req.headers, nheaders)
             headers.append(nheaders)
         if self.app.memcache:
@@ -1551,15 +1553,13 @@ class ContainerController(Controller):
         if error_response:
             return error_response
         account_partition, accounts, container_count = \
-            self.account_info(self.account_name,
+            self.account_info(self.account_name, req,
                               autocreate=self.app.account_autocreate)
         if not accounts:
             return HTTPNotFound(request=req)
         container_partition, containers = self.app.container_ring.get_nodes(
             self.account_name, self.container_name)
-        headers = {'X-Timestamp': normalize_timestamp(time.time()),
-                   'x-trans-id': self.trans_id,
-                   'Connection': 'close'}
+        headers = self.generate_request_headers(req)
         self.transfer_headers(req.headers, headers)
         if self.app.memcache:
             cache_key = get_container_memcache_key(self.account_name,
@@ -1573,19 +1573,17 @@ class ContainerController(Controller):
     def DELETE(self, req):
         """HTTP DELETE request handler."""
         account_partition, accounts, container_count = \
-            self.account_info(self.account_name)
+            self.account_info(self.account_name, req)
         if not accounts:
             return HTTPNotFound(request=req)
         container_partition, containers = self.app.container_ring.get_nodes(
             self.account_name, self.container_name)
         headers = []
         for account in accounts:
-            headers.append({'X-Timestamp': normalize_timestamp(time.time()),
-                           'X-Trans-Id': self.trans_id,
-                           'X-Account-Host': '%(ip)s:%(port)s' % account,
+            additionals = {'X-Account-Host': '%(ip)s:%(port)s' % account,
                            'X-Account-Partition': account_partition,
-                           'X-Account-Device': account['device'],
-                           'Connection': 'close'})
+                           'X-Account-Device': account['device'],}
+            headers.append(self.generate_request_headers(req, additionals))
         if self.app.memcache:
             cache_key = get_container_memcache_key(self.account_name,
                                                    self.container_name)
@@ -1617,9 +1615,7 @@ class AccountController(Controller):
                 resp.body = 'Account name length of %d longer than %d' % \
                             (len(self.account_name), MAX_ACCOUNT_NAME_LENGTH)
                 return resp
-            headers = {'X-Timestamp': normalize_timestamp(time.time()),
-                       'X-Trans-Id': self.trans_id,
-                       'Connection': 'close'}
+            headers = self.generate_request_headers(req)
             resp = self.make_requests(
                 Request.blank('/v1/' + self.account_name),
                 self.app.account_ring, partition, 'PUT',
@@ -1646,9 +1642,7 @@ class AccountController(Controller):
             return resp
         account_partition, accounts = \
             self.app.account_ring.get_nodes(self.account_name)
-        headers = {'X-Timestamp': normalize_timestamp(time.time()),
-                   'x-trans-id': self.trans_id,
-                   'Connection': 'close'}
+        headers = self.generate_request_headers(req)
         self.transfer_headers(req.headers, headers)
         if self.app.memcache:
             self.app.memcache.delete('account%s' % req.path_info.rstrip('/'))
@@ -1663,9 +1657,7 @@ class AccountController(Controller):
             return error_response
         account_partition, accounts = \
             self.app.account_ring.get_nodes(self.account_name)
-        headers = {'X-Timestamp': normalize_timestamp(time.time()),
-                   'X-Trans-Id': self.trans_id,
-                   'Connection': 'close'}
+        headers = self.generate_request_headers(req)
         self.transfer_headers(req.headers, headers)
         if self.app.memcache:
             self.app.memcache.delete('account%s' % req.path_info.rstrip('/'))
@@ -1694,9 +1686,7 @@ class AccountController(Controller):
             return HTTPMethodNotAllowed(request=req)
         account_partition, accounts = \
             self.app.account_ring.get_nodes(self.account_name)
-        headers = {'X-Timestamp': normalize_timestamp(time.time()),
-                   'X-Trans-Id': self.trans_id,
-                   'Connection': 'close'}
+        headers = self.generate_request_headers(req)
         if self.app.memcache:
             self.app.memcache.delete('account%s' % req.path_info.rstrip('/'))
         return self.make_requests(req, self.app.account_ring,

@@ -324,6 +324,10 @@ def save_globals():
         proxy_server.Controller.account_info = orig_account_info
 
 
+class FakeReq(object):
+    def __init__(self):
+        self.url = "http://fake.domain/fake/really/fake"
+
 # tests
 class TestController(unittest.TestCase):
 
@@ -331,6 +335,7 @@ class TestController(unittest.TestCase):
         self.account_ring = FakeRing()
         self.container_ring = FakeRing()
         self.memcache = FakeMemcache()
+        self.req = FakeReq()
 
         app = proxy_server.Application(None, self.memcache,
             account_ring=self.account_ring,
@@ -355,7 +360,7 @@ class TestController(unittest.TestCase):
         with save_globals():
             proxy_server.http_connect = fake_http_connect(200)
             partition, nodes, count = \
-                self.controller.account_info(self.account)
+                self.controller.account_info(self.account, self.req)
             proxy_server.http_connect = fake_http_connect(201,
                                             raise_timeout_exc=True)
             self.controller._make_request(nodes, partition, 'POST',
@@ -366,7 +371,7 @@ class TestController(unittest.TestCase):
         with save_globals():
             proxy_server.http_connect = fake_http_connect(200)
             partition, nodes, count = \
-                self.controller.account_info(self.account)
+                self.controller.account_info(self.account, self.req)
             self.check_account_info_return(partition, nodes)
             self.assertEquals(count, 12345)
 
@@ -376,7 +381,7 @@ class TestController(unittest.TestCase):
 
             proxy_server.http_connect = fake_http_connect()
             partition, nodes, count = \
-                self.controller.account_info(self.account)
+                self.controller.account_info(self.account, self.req)
             self.check_account_info_return(partition, nodes)
             self.assertEquals(count, 12345)
 
@@ -385,7 +390,7 @@ class TestController(unittest.TestCase):
         with save_globals():
             proxy_server.http_connect = fake_http_connect(404, 404, 404)
             partition, nodes, count = \
-                self.controller.account_info(self.account)
+                self.controller.account_info(self.account, self.req)
             self.check_account_info_return(partition, nodes, True)
             self.assertEquals(count, None)
 
@@ -395,7 +400,7 @@ class TestController(unittest.TestCase):
 
             proxy_server.http_connect = fake_http_connect()
             partition, nodes, count = \
-                self.controller.account_info(self.account)
+                self.controller.account_info(self.account, self.req)
             self.check_account_info_return(partition, nodes, True)
             self.assertEquals(count, None)
 
@@ -404,7 +409,7 @@ class TestController(unittest.TestCase):
         def test(*status_list):
             proxy_server.http_connect = fake_http_connect(*status_list)
             partition, nodes, count = \
-                self.controller.account_info(self.account)
+                self.controller.account_info(self.account, self.req)
             self.assertEqual(len(self.memcache.keys()), 0)
             self.check_account_info_return(partition, nodes, True)
             self.assertEquals(count, None)
@@ -421,7 +426,8 @@ class TestController(unittest.TestCase):
             proxy_server.http_connect = \
                 fake_http_connect(404, 404, 404, 201, 201, 201)
             partition, nodes, count = \
-                self.controller.account_info(self.account, autocreate=False)
+                self.controller.account_info(self.account, self.req,
+                                             autocreate=False)
             self.check_account_info_return(partition, nodes, is_none=True)
             self.assertEquals(count, None)
 
@@ -429,7 +435,7 @@ class TestController(unittest.TestCase):
             proxy_server.http_connect = \
                 fake_http_connect(404, 404, 404, 201, 201, 201)
             partition, nodes, count = \
-                self.controller.account_info(self.account)
+                self.controller.account_info(self.account, self.req)
             self.check_account_info_return(partition, nodes, is_none=True)
             self.assertEquals(count, None)
 
@@ -437,7 +443,8 @@ class TestController(unittest.TestCase):
             proxy_server.http_connect = \
                 fake_http_connect(404, 404, 404, 201, 201, 201)
             partition, nodes, count = \
-                self.controller.account_info(self.account, autocreate=True)
+                self.controller.account_info(self.account, self.req,
+                                             autocreate=True)
             self.check_account_info_return(partition, nodes)
             self.assertEquals(count, 0)
 
@@ -445,7 +452,8 @@ class TestController(unittest.TestCase):
             proxy_server.http_connect = \
                 fake_http_connect(404, 404, 404, 503, 201, 201)
             partition, nodes, count = \
-                self.controller.account_info(self.account, autocreate=True)
+                self.controller.account_info(self.account, self.req,
+                                             autocreate=True)
             self.check_account_info_return(partition, nodes)
             self.assertEquals(count, 0)
 
@@ -455,7 +463,8 @@ class TestController(unittest.TestCase):
             exc = None
             try:
                 partition, nodes, count = \
-                    self.controller.account_info(self.account, autocreate=True)
+                    self.controller.account_info(self.account, self.req,
+                                                 autocreate=True)
             except Exception, err:
                 exc = err
             self.assertEquals(str(exc),
@@ -474,18 +483,18 @@ class TestController(unittest.TestCase):
         self.assertEqual(write_acl, ret[3])
 
     def test_container_info_invalid_account(self):
-        def account_info(self, account, autocreate=False):
+        def account_info(self, account, req, autocreate=False):
             return None, None
 
         with save_globals():
             proxy_server.Controller.account_info = account_info
             ret = self.controller.container_info(self.account,
-                self.container)
+                self.container, self.req)
             self.check_container_info_return(ret, True)
 
     # tests if 200 is cached and used
     def test_container_info_200(self):
-        def account_info(self, account, autocreate=False):
+        def account_info(self, account, req, autocreate=False):
             return True, True, 0
 
         with save_globals():
@@ -495,7 +504,7 @@ class TestController(unittest.TestCase):
             proxy_server.http_connect = fake_http_connect(200,
                 headers=headers)
             ret = self.controller.container_info(self.account,
-                self.container)
+                self.container, self.req)
             self.check_container_info_return(ret)
 
             cache_key = proxy_server.get_container_memcache_key(self.account,
@@ -506,19 +515,19 @@ class TestController(unittest.TestCase):
 
             proxy_server.http_connect = fake_http_connect()
             ret = self.controller.container_info(self.account,
-                 self.container)
+                 self.container, self.req)
             self.check_container_info_return(ret)
 
     # tests if 404 is cached and used
     def test_container_info_404(self):
-        def account_info(self, account, autocreate=False):
+        def account_info(self, account, req, autocreate=False):
             return True, True, 0
 
         with save_globals():
             proxy_server.Controller.account_info = account_info
             proxy_server.http_connect = fake_http_connect(404, 404, 404)
             ret = self.controller.container_info(self.account,
-                self.container)
+                self.container, self.req)
             self.check_container_info_return(ret, True)
 
             cache_key = proxy_server.get_container_memcache_key(self.account,
@@ -529,7 +538,7 @@ class TestController(unittest.TestCase):
 
             proxy_server.http_connect = fake_http_connect()
             ret = self.controller.container_info(self.account,
-                 self.container)
+                 self.container, self.req)
             self.check_container_info_return(ret, True)
 
     # tests if some http status codes are not cached
@@ -537,7 +546,7 @@ class TestController(unittest.TestCase):
         def test(*status_list):
             proxy_server.http_connect = fake_http_connect(*status_list)
             ret = self.controller.container_info(self.account,
-                self.container)
+                self.container, self.req)
             self.assertEqual(len(self.memcache.keys()), 0)
             self.check_container_info_return(ret, True)
 

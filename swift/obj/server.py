@@ -394,6 +394,7 @@ class ObjectController(object):
                             request
         :param objdevice: device name that the object is in
         """
+        headers_out['user-agent'] = 'obj-server %s' % os.getpid()
         full_path = '/%s/%s/%s' % (account, container, obj)
         if all([host, partition, contdevice]):
             try:
@@ -444,11 +445,12 @@ class ObjectController(object):
         contdevice = headers_in.get('X-Container-Device', None)
         if not all([host, partition, contdevice]):
             return
+        headers_out['x-trans-id'] = headers_in.get('x-trans-id', '-')
         self.async_update(op, account, container, obj, host, partition,
                           contdevice, headers_out, objdevice)
 
     def delete_at_update(self, op, delete_at, account, container, obj,
-                         headers_in, objdevice):
+                         headers_in, objdevice, referer):
         """
         Update the expiring objects container when objects are updated.
 
@@ -461,7 +463,8 @@ class ObjectController(object):
         """
         host = partition = contdevice = None
         headers_out = {'x-timestamp': headers_in['x-timestamp'],
-                       'x-trans-id': headers_in.get('x-trans-id', '-')}
+                       'x-trans-id': headers_in.get('x-trans-id', '-'),
+                       'referer': referer,}
         if op != 'DELETE':
             host = headers_in.get('X-Delete-At-Host', None)
             partition = headers_in.get('X-Delete-At-Partition', None)
@@ -519,10 +522,11 @@ class ObjectController(object):
         if old_delete_at != new_delete_at:
             if new_delete_at:
                 self.delete_at_update('PUT', new_delete_at, account, container,
-                                      obj, request.headers, device)
+                                      obj, request.headers, device, request.url)
             if old_delete_at:
                 self.delete_at_update('DELETE', old_delete_at, account,
-                                      container, obj, request.headers, device)
+                                      container, obj, request.headers, device,
+                                      request.url)
         with file.mkstemp() as (fd, tmppath):
             file.put(fd, tmppath, metadata, extension='.meta')
         return response_class(request=request)
@@ -597,10 +601,10 @@ class ObjectController(object):
             if old_delete_at != new_delete_at:
                 if new_delete_at:
                     self.delete_at_update('PUT', new_delete_at, account,
-                        container, obj, request.headers, device)
+                        container, obj, request.headers, device, request.url)
                 if old_delete_at:
                     self.delete_at_update('DELETE', old_delete_at, account,
-                        container, obj, request.headers, device)
+                        container, obj, request.headers, device, request.url)
             file.put(fd, tmppath, metadata)
         file.unlinkold(metadata['X-Timestamp'])
         if not orig_timestamp or \
@@ -611,7 +615,7 @@ class ObjectController(object):
                  'x-content-type': file.metadata['Content-Type'],
                  'x-timestamp': file.metadata['X-Timestamp'],
                  'x-etag': file.metadata['ETag'],
-                 'x-trans-id': request.headers.get('x-trans-id', '-')},
+                 'referer': request.url,},
                 device)
         resp = HTTPCreated(request=request, etag=etag)
         return resp
@@ -761,14 +765,15 @@ class ObjectController(object):
             old_delete_at = int(file.metadata.get('X-Delete-At') or 0)
             if old_delete_at:
                 self.delete_at_update('DELETE', old_delete_at, account,
-                                      container, obj, request.headers, device)
+                                      container, obj, request.headers, device,
+                                      request.url)
             file.put(fd, tmppath, metadata, extension='.ts')
         file.unlinkold(metadata['X-Timestamp'])
         if not orig_timestamp or \
                 orig_timestamp < request.headers['x-timestamp']:
             self.container_update('DELETE', account, container, obj,
                 request.headers, {'x-timestamp': metadata['X-Timestamp'],
-                'x-trans-id': request.headers.get('x-trans-id', '-')},
+                'referer': request.url,},
                 device)
         resp = response_class(request=request)
         return resp

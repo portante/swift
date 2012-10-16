@@ -101,7 +101,9 @@ class ContainerController(object):
                 'x-delete-timestamp': info['delete_timestamp'],
                 'x-object-count': info['object_count'],
                 'x-bytes-used': info['bytes_used'],
-                'x-trans-id': req.headers.get('x-trans-id', '-')}
+                'x-trans-id': req.headers.get('x-trans-id', '-'),
+                'user-agent': 'container-server %s' % os.getpid(),
+                'referer': req.url}
             if req.headers.get('x-account-override-deleted', 'no').lower() == \
                     'yes':
                 account_headers['x-account-override-deleted'] = 'yes'
