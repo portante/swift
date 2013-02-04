@@ -170,6 +170,7 @@ class TestMemcached(unittest.TestCase):
         esttimeout = time.time() + 10
         memcache_client.set('some_key', [1, 2, 3], timeout=10)
         self.assert_(-1 <= float(mock.cache.values()[0][1]) - esttimeout <= 1)
+        self.assertEquals(memcache_client.get('some_key', cas=True), [4, 5, 6])
 
     def test_incr(self):
         memcache_client = memcached.MemcacheRing(['1.2.3.4:11211'])
@@ -247,4 +248,3 @@ class TestMemcached(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-

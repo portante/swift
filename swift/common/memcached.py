@@ -51,6 +51,10 @@ class MemcacheConnectionError(Exception):
     pass
 
 
+class MemcacheAddError(Exception):
+    pass
+
+
 class MemcacheRing(object):
     """
     Simple, consistent-hashed memcache client.
@@ -149,30 +153,106 @@ class MemcacheRing(object):
             except Exception, e:
                 self._exception_occurred(server, e)
 
-    def get(self, key):
+    def get(self, key, cas=False):
         """
         Gets the object specified by key.  It will also unpickle the object
         before returning if it is pickled in memcache.
 
         :param key: key
+        :param cas: fetch CAS Unique value
         :returns: value of the key in memcache
         """
         key = md5hash(key)
         value = None
+        cas_unique = None
         for (server, fp, sock) in self._get_conns(key):
             try:
-                sock.sendall('get %s\r\n' % key)
+                sock.sendall('get%s %s\r\n' % ('s' if cas else '', key))
                 line = fp.readline().strip().split()
                 while line[0].upper() != 'END':
                     if line[0].upper() == 'VALUE' and line[1] == key:
                         size = int(line[3])
+                        if cas:
+                            cas_unique = int(line[4])
                         value = fp.read(size)
                         if int(line[2]) & PICKLE_FLAG:
                             value = pickle.loads(value)
                         fp.readline()
                     line = fp.readline().strip().split()
                 self._return_conn(server, fp, sock)
-                return value
+                return (value, cas_unique) if cas else value
+            except Exception, e:
+                self._exception_occurred(server, e)
+
+    def add(self, key, value, serialize=True, timeout=0):
+        """
+        Add a key/value pair in memcache, only if it is not already there.
+
+        :param key: key
+        :param value: value
+        :param serialize: if True, value is pickled before sending to memcache
+        :param timeout: ttl in memcache
+        """
+        key = md5hash(key)
+        if timeout > 0:
+            timeout += time.time()
+        flags = 0
+        if serialize:
+            value = pickle.dumps(value, PICKLE_PROTOCOL)
+            flags |= PICKLE_FLAG
+        for (server, fp, sock) in self._get_conns(key):
+            try:
+                sock.sendall('add %s %d %d %s\r\n%s\r\n' % \
+                              (key, flags, timeout, len(value), value))
+                line = fp.readline().strip().split()
+                resp = line[0].upper()
+                if resp == 'NOT_STORED':
+                    ret = False
+                elif resp == 'STORED':
+                    ret = True
+                else:
+                    ret = None
+                self._return_conn(server, fp, sock)
+                if ret is None:
+                    raise MemcacheAddError("Unexpected response: %s" % resp)
+                return ret
+            except Exception, e:
+                self._exception_occurred(server, e)
+
+    def cas(self, key, value, cas_unique, serialize=True, timeout=0):
+        """
+        "Compare-and-Swap" a key/value pair in memcache
+
+        :param key: key
+        :param value: value
+        :param cas_unique: expected unique value for "compare and swap" to
+                           succeed
+        :param serialize: if True, value is pickled before sending to memcache
+        :param timeout: ttl in memcache
+        """
+        key = md5hash(key)
+        if timeout > 0:
+            timeout += time.time()
+        flags = 0
+        if serialize:
+            value = pickle.dumps(value, PICKLE_PROTOCOL)
+            flags |= PICKLE_FLAG
+        for (server, fp, sock) in self._get_conns(key):
+            try:
+                sock.sendall('cas %s %d %d %d %d\r\n%s\r\n' % \
+                              (key, flags, timeout, len(value), cas_unique, value))
+                line = fp.readline().strip().split()
+                resp = line[0].upper()
+                if resp in ('NOT_FOUND', 'EXISTS'):
+                    ret = False
+                elif resp == 'STORED':
+                    ret = True
+                else:
+                    ret = None
+                self._return_conn(server, fp, sock)
+                if ret is None:
+                    raise MemcacheAddError("Unexpected response: %s" % resp)
+                return ret
             except Exception, e:
                 self._exception_occurred(server, e)
 
