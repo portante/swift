@@ -16,6 +16,7 @@
 import os
 import time
 from swift import gettext_ as _
+from contextlib import closing
 
 from eventlet import Timeout
 
@@ -23,7 +24,7 @@ from swift.obj import diskfile
 from swift.common.utils import get_logger, ratelimit_sleep, \
     dump_recon_cache, list_from_csv, json
 from swift.common.ondisk import Devices
-from swift.common.exceptions import AuditException, DiskFileError, \
+from swift.common.exceptions import AuditException, DiskFileQuarantined, \
     DiskFileNotExist
 from swift.common.daemon import Daemon
 
@@ -176,39 +177,44 @@ class AuditorWorker(object):
             _junk, account, container, obj = name.split('/', 3)
             df = self.diskfile_mgr.get_diskfile(
                 device, partition, account, container, obj)
-            df.open()
             try:
-                try:
-                    obj_size = df.get_data_file_size()
-                except DiskFileNotExist:
-                    return
-                except DiskFileError as e:
-                    raise AuditException(str(e))
-                if self.stats_sizes:
-                    self.record_stats(obj_size)
-                if self.zero_byte_only_at_fps and obj_size:
-                    self.passes += 1
-                    return
-                for chunk in df:
-                    self.bytes_running_time = ratelimit_sleep(
-                        self.bytes_running_time, self.max_bytes_per_second,
-                        incr_by=len(chunk))
-                    self.bytes_processed += len(chunk)
-                    self.total_bytes_processed += len(chunk)
-                df.close()
-                if df.quarantined_dir:
+                with df.open():
+                    metadata = df.get_metadata()
+                    obj_size = int(metadata['Content-Length'])
+                    if self.stats_sizes:
+                        self.record_stats(obj_size)
+                    if self.zero_byte_only_at_fps and obj_size:
+                        self.passes += 1
+                        return
+                    reader = df.reader()
+                with closing(reader):
+                    for chunk in reader:
+                        chunk_len = len(chunk)
+                        self.bytes_running_time = ratelimit_sleep(
+                            self.bytes_running_time,
+                            self.max_bytes_per_second,
+                            incr_by=chunk_len)
+                        self.bytes_processed += chunk_len
+                        self.total_bytes_processed += chunk_len
+                if reader.was_quarantined:
                     self.quarantines += 1
-                    self.logger.error(
-                        _("ERROR Object %(path)s failed audit and will be "
-                          "quarantined: ETag and file's md5 do not match"),
-                        {'path': path})
-            finally:
-                df.close(verify_file=False)
+                    self.logger.error(_('ERROR Object %(obj)s failed audit and'
+                                        ' was quarantined: %(err)s'),
+                                      {'obj': path,
+                                       'err': reader.was_quarantined})
+                    return
+            except DiskFileNotExist:
+                return
+        except DiskFileQuarantined as err:
+            self.quarantines += 1
+            self.logger.error(_('ERROR Object %(obj)s failed audit and was'
+                                ' quarantined: %(err)s'),
+                              {'obj': path, 'err': err})
         except AuditException as err:
             self.logger.increment('quarantines')
             self.quarantines += 1
-            self.logger.error(_('ERROR Object %(obj)s failed audit and will '
-                                'be quarantined: %(err)s'),
+            self.logger.error(_('ERROR Object %(obj)s failed audit and will'
+                                ' be quarantined: %(err)s'),
                               {'obj': path, 'err': err})
             diskfile.quarantine_renamer(
                 self.devices.construct_dev_path(device), path)

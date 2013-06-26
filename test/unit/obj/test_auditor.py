@@ -301,7 +301,6 @@ class TestAuditor(unittest.TestCase):
         self.auditor.log_time = 0
         ts_file_path = ''
         if with_ts:
-
             name_hash = hash_path('a', 'c', 'o')
             dir_path = os.path.join(
                 self.devices, 'sda',
@@ -325,8 +324,6 @@ class TestAuditor(unittest.TestCase):
             etag = etag.hexdigest()
             metadata['ETag'] = etag
             write_metadata(writer.fd, metadata)
-        if self.disk_file.data_file:
-            return self.disk_file.data_file
         return ts_file_path
 
     def test_object_run_fast_track_all(self):
@@ -343,6 +340,28 @@ class TestAuditor(unittest.TestCase):
                                        'sda', 'quarantined', 'objects')
         self.assertTrue(os.path.isdir(quarantine_path))
 
+    def test_object_run_fast_track_zero_check_closed(self):
+        rat = [False]
+        from swift.obj.diskfile import DiskFile
+
+        class FakeFile(DiskFile):
+
+            def _quarantine(self, data_file, msg):
+                rat[0] = True
+                DiskFile._quarantine(self, data_file, msg)
+
+        self.setup_bad_zero_byte()
+        was_df = auditor.diskfile.DiskFile
+        try:
+            auditor.diskfile.DiskFile = FakeFile
+            self.auditor.run_once(zero_byte_fps=50)
+            quarantine_path = os.path.join(self.devices,
+                                           'sda', 'quarantined', 'objects')
+            self.assertTrue(os.path.isdir(quarantine_path))
+            self.assertTrue(rat[0])
+        finally:
+            auditor.diskfile.DiskFile = was_df
+
     def test_with_tombstone(self):
         ts_file_path = self.setup_bad_zero_byte(with_ts=True)
         self.auditor.run_once()
@@ -357,27 +376,6 @@ class TestAuditor(unittest.TestCase):
         delta_t = time.time() - start
         self.assert_(delta_t > 0.08)
         self.assert_(delta_t < 0.12)
-
-    def test_object_run_fast_track_zero_check_closed(self):
-        rat = [False]
-        from swift.obj.diskfile import DiskFile
-
-        class FakeFile(DiskFile):
-
-            def close(self, verify_file=True):
-                rat[0] = True
-                DiskFile.close(self, verify_file=verify_file)
-        self.setup_bad_zero_byte()
-        was_df = auditor.diskfile.DiskFile
-        try:
-            auditor.diskfile.DiskFile = FakeFile
-            self.auditor.run_once(zero_byte_fps=50)
-            quarantine_path = os.path.join(self.devices,
-                                           'sda', 'quarantined', 'objects')
-            self.assertTrue(os.path.isdir(quarantine_path))
-            self.assertTrue(rat[0])
-        finally:
-            auditor.diskfile.DiskFile = was_df
 
     def test_run_forever(self):
 
