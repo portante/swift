@@ -48,11 +48,10 @@ from xattr import getxattr, setxattr
 from eventlet import Timeout
 
 from swift import gettext_ as _
-from swift.common.constraints import check_mount
 from swift.common.utils import mkdirs, normalize_timestamp, \
     storage_directory, hash_path, renamer, fallocate, fsync, \
     fdatasync, drop_buffer_cache, ThreadPool, lock_path, write_pickle, \
-    config_true_value, listdir, split_path, ismount
+    config_true_value, listdir, split_path, ismount, check_mount
 from swift.common.exceptions import DiskFileQuarantined, DiskFileNotExist, \
     DiskFileCollision, DiskFileNoSpace, DiskFileDeviceUnavailable, \
     DiskFileDeleted, DiskFileError, DiskFileNotOpen, PathNotDir, \

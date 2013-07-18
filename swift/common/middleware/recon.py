@@ -19,8 +19,7 @@ from swift import gettext_ as _
 
 from swift import __version__ as swiftver
 from swift.common.swob import Request, Response
-from swift.common.utils import get_logger, config_true_value, json
-from swift.common.constraints import check_mount
+from swift.common.utils import get_logger, config_true_value, json, check_mount
 from resource import getpagesize
 from hashlib import md5
 

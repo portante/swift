@@ -13,11 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import urllib
 from ConfigParser import ConfigParser, NoSectionError, NoOptionError
 
-from swift.common.utils import ismount
 from swift.common.swob import HTTPBadRequest, HTTPLengthRequired, \
     HTTPRequestEntityTooLarge
 
@@ -157,23 +154,6 @@ def check_object_creation(req, object_name):
                 request=req,
                 body='X-Object-Manifest must in the format container/prefix')
     return check_metadata(req, 'object')
-
-
-def check_mount(root, drive):
-    """
-    Verify that the path to the device is a mount point and mounted.  This
-    allows us to fast fail on drives that have been unmounted because of
-    issues, and also prevents us for accidentally filling up the root
-    partition.
-
-    :param root:  base path where the devices are mounted
-    :param drive: drive name to be checked
-    :returns: True if it is a valid mounted device, False otherwise
-    """
-    if not (urllib.quote_plus(drive) == drive):
-        return False
-    path = os.path.join(root, drive)
-    return ismount(path)
 
 
 def check_float(string):

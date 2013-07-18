@@ -23,7 +23,6 @@ import unittest
 import eventlet
 import mock
 
-from swift.common import constraints
 from swift.common import exceptions
 from swift.common import swob
 from swift.common import utils
@@ -209,7 +208,7 @@ class TestReceiver(unittest.TestCase):
                 mock.patch.object(
                     self.controller._diskfile_mgr, 'mount_check', False),
                 mock.patch.object(
-                    constraints, 'check_mount', return_value=False)) as (
+                    utils, 'check_mount', return_value=False)) as (
                 mocked_replication_semaphore,
                 mocked_mount_check,
                 mocked_check_mount):
@@ -228,7 +227,7 @@ class TestReceiver(unittest.TestCase):
                 mock.patch.object(
                     self.controller._diskfile_mgr, 'mount_check', True),
                 mock.patch.object(
-                    constraints, 'check_mount', return_value=False)) as (
+                    utils, 'check_mount', return_value=False)) as (
                 mocked_replication_semaphore,
                 mocked_mount_check,
                 mocked_check_mount):

@@ -83,3 +83,16 @@ swift_hash_path_prefix = changeme
 # of a container name
 
 #max_container_name_length = 256
+
+
+# The swift-disk section sets the basic common parameters for working with the
+# local disk storage across all three server backends: object, container and
+# account.
+
+[swift-disk]
+
+# The maximum amount of a time in seconds to cache the mount check for a
+# target disk for some operation. For heavy API traffic this can help improve
+# small file, or no-payload, API opertions.
+
+#check_mount_cache_time = 10

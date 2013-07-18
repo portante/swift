@@ -1096,7 +1096,7 @@ class TestDiskFile(unittest.TestCase):
         def _mock_cm(*args, **kwargs):
             return False
 
-        with mock.patch("swift.common.constraints.check_mount", _mock_cm):
+        with mock.patch("swift.common.utils.check_mount", _mock_cm):
             try:
                 self._get_open_disk_file(mount_check=True)
             except DiskFileDeviceUnavailable:

@@ -17,10 +17,11 @@ import unittest
 from unittest import TestCase
 from contextlib import contextmanager
 from posix import stat_result, statvfs_result
+from collections import defaultdict
 import os
 import mock
 
-import swift.common.constraints
+import swift.common.utils
 from swift import __version__ as swiftver
 from swift.common.swob import Request
 from swift.common.middleware import recon
@@ -185,10 +186,10 @@ class TestReconSuccess(TestCase):
         self.mockos = MockOS()
         self.fakecache = FakeFromCache()
         self.real_listdir = os.listdir
-        self.real_ismount = swift.common.constraints.ismount
+        self.real_ismount = swift.common.utils.ismount
         self.real_statvfs = os.statvfs
         os.listdir = self.mockos.fake_listdir
-        swift.common.constraints.ismount = self.mockos.fake_ismount
+        swift.common.utils.ismount = self.mockos.fake_ismount
         os.statvfs = self.mockos.fake_statvfs
         self.real_from_cache = self.app._from_recon_cache
         self.app._from_recon_cache = self.fakecache.fake_from_recon_cache
@@ -196,11 +197,13 @@ class TestReconSuccess(TestCase):
 
     def tearDown(self):
         os.listdir = self.real_listdir
-        swift.common.constraints.ismount = self.real_ismount
+        swift.common.utils.ismount = self.real_ismount
         os.statvfs = self.real_statvfs
         del self.mockos
         self.app._from_recon_cache = self.real_from_cache
         del self.fakecache
+        swift.common.utils._drive_mount_check = defaultdict(
+            swift.common.utils._def_val)
 
     def test_from_recon_cache(self):
         oart = OpenAndReadTester(['{"notneeded": 5, "testkey1": "canhazio"}'])

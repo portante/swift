@@ -19,7 +19,6 @@ import eventlet
 import eventlet.wsgi
 import eventlet.greenio
 
-from swift.common import constraints
 from swift.common import exceptions
 from swift.common import http
 from swift.common import swob
@@ -164,7 +163,7 @@ class Receiver(object):
             urllib.unquote(self.request.path), 2, 2, False)
         utils.validate_device_partition(self.device, self.partition)
         if self.app._diskfile_mgr.mount_check and \
-                not constraints.check_mount(
+                not utils.check_mount(
                     self.app._diskfile_mgr.devices, self.device):
             raise swob.HTTPInsufficientStorage(drive=self.device)
         self.fp = self.request.environ['wsgi.input']

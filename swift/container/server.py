@@ -29,10 +29,10 @@ from swift.common.request_helpers import get_param, get_listing_content_type, \
     split_and_validate_path
 from swift.common.utils import get_logger, hash_path, public, \
     normalize_timestamp, storage_directory, validate_sync_to, \
-    config_true_value, json, timing_stats, replication, \
+    config_true_value, json, timing_stats, replication, check_mount, \
     override_bytes_from_content_type
 from swift.common.constraints import CONTAINER_LISTING_LIMIT, \
-    check_mount, check_float, check_utf8
+    check_float, check_utf8
 from swift.common.bufferedhttp import http_connect
 from swift.common.exceptions import ConnectionTimeout
 from swift.common.db_replicator import ReplicatorRpc

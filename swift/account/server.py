@@ -28,9 +28,9 @@ from swift.common.request_helpers import get_param, get_listing_content_type, \
     split_and_validate_path
 from swift.common.utils import get_logger, hash_path, public, \
     normalize_timestamp, storage_directory, config_true_value, \
-    json, timing_stats, replication
+    json, timing_stats, replication, check_mount
 from swift.common.constraints import ACCOUNT_LISTING_LIMIT, \
-    check_mount, check_float, check_utf8
+    check_float, check_utf8
 from swift.common.db_replicator import ReplicatorRpc
 from swift.common.swob import HTTPAccepted, HTTPBadRequest, \
     HTTPCreated, HTTPForbidden, HTTPInternalServerError, \

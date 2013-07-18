@@ -30,12 +30,10 @@ import sys
 
 from textwrap import dedent
 
-import tempfile
 import threading
 import time
 import unittest
 import fcntl
-import shutil
 from contextlib import nested
 
 from Queue import Queue, Empty
@@ -43,7 +41,7 @@ from getpass import getuser
 from shutil import rmtree
 from StringIO import StringIO
 from functools import partial
-from tempfile import TemporaryFile, NamedTemporaryFile, mkdtemp
+from tempfile import TemporaryFile, NamedTemporaryFile, mkstemp, mkdtemp
 from netifaces import AF_INET6
 from mock import MagicMock, patch
 
@@ -52,7 +50,7 @@ from swift.common.exceptions import (Timeout, MessageTimeout,
                                      ReplicationLockTimeout)
 from swift.common import utils
 from swift.common.swob import Response
-from test.unit import FakeLogger
+from test.unit import FakeLogger, MockTrue
 
 
 class MockOs():
@@ -152,7 +150,7 @@ class TestUtils(unittest.TestCase):
                 self.assertTrue(exc is not None)
                 self.assertTrue(not success)
         finally:
-            shutil.rmtree(tmpdir)
+            rmtree(tmpdir)
 
     def test_lock_path_class(self):
         tmpdir = mkdtemp()
@@ -185,7 +183,7 @@ class TestUtils(unittest.TestCase):
                 self.assertTrue(exc2 is not None)
                 self.assertTrue(not success)
         finally:
-            shutil.rmtree(tmpdir)
+            rmtree(tmpdir)
 
     def test_normalize_timestamp(self):
         # Test swift.common.utils.normalize_timestamp
@@ -764,7 +762,7 @@ foo = bar
 [section2]
 log_name = yarr'''
         # setup a real file
-        fd, temppath = tempfile.mkstemp(dir='/tmp')
+        fd, temppath = mkstemp(dir='/tmp')
         with os.fdopen(fd, 'wb') as f:
             f.write(conf)
         make_filename = lambda: temppath
@@ -810,7 +808,7 @@ foo = bar
 [section2]
 log_name = %(yarr)s'''
         # setup a real file
-        fd, temppath = tempfile.mkstemp(dir='/tmp')
+        fd, temppath = mkstemp(dir='/tmp')
         with os.fdopen(fd, 'wb') as f:
             f.write(conf)
         make_filename = lambda: temppath
@@ -1503,14 +1501,14 @@ log_name = %(yarr)s'''
         try:
             self.assertFalse(utils.ismount(os.path.join(tmpdir, 'bar')))
         finally:
-            shutil.rmtree(tmpdir)
+            rmtree(tmpdir)
 
     def test_ismount_path_not_mount(self):
         tmpdir = mkdtemp()
         try:
             self.assertFalse(utils.ismount(tmpdir))
         finally:
-            shutil.rmtree(tmpdir)
+            rmtree(tmpdir)
 
     def test_ismount_path_error(self):
 
@@ -1522,7 +1520,7 @@ log_name = %(yarr)s'''
             with patch("os.lstat", _mock_os_lstat):
                 self.assertRaises(OSError, utils.ismount, tmpdir)
         finally:
-            shutil.rmtree(tmpdir)
+            rmtree(tmpdir)
 
     def test_ismount_path_is_symlink(self):
         tmpdir = mkdtemp()
@@ -1531,7 +1529,7 @@ log_name = %(yarr)s'''
             os.symlink("/tmp", link)
             self.assertFalse(utils.ismount(link))
         finally:
-            shutil.rmtree(tmpdir)
+            rmtree(tmpdir)
 
     def test_ismount_path_is_root(self):
         self.assertTrue(utils.ismount('/'))
@@ -1551,7 +1549,7 @@ log_name = %(yarr)s'''
             with patch("os.lstat", _mock_os_lstat):
                 self.assertRaises(OSError, utils.ismount, tmpdir)
         finally:
-            shutil.rmtree(tmpdir)
+            rmtree(tmpdir)
 
     def test_ismount_successes_dev(self):
 
@@ -1576,7 +1574,7 @@ log_name = %(yarr)s'''
             with patch("os.lstat", _mock_os_lstat):
                 self.assertTrue(utils.ismount(tmpdir))
         finally:
-            shutil.rmtree(tmpdir)
+            rmtree(tmpdir)
 
     def test_ismount_successes_ino(self):
 
@@ -1603,7 +1601,36 @@ log_name = %(yarr)s'''
             with patch("os.lstat", _mock_os_lstat):
                 self.assertTrue(utils.ismount(tmpdir))
         finally:
-            shutil.rmtree(tmpdir)
+            rmtree(tmpdir)
+
+    def test_check_mount(self):
+        self.assertFalse(utils.check_mount('', ''))
+        with patch("swift.common.utils.ismount", MockTrue()):
+            self.assertTrue(utils.check_mount('/srv', '1'))
+            self.assertTrue(utils.check_mount('/srv', 'foo-bar'))
+            self.assertTrue(utils.check_mount(
+                '/srv', '003ed03c-242a-4b2f-bee9-395f801d1699'))
+            self.assertFalse(utils.check_mount('/srv', 'foo bar'))
+            self.assertFalse(utils.check_mount('/srv', 'foo/bar'))
+            self.assertFalse(utils.check_mount('/srv', 'foo?bar'))
+
+    def test_check_mount_cache(self):
+        counter = [100.0]
+
+        def mytime():
+            counter[0] += 0.1
+            return counter[0]
+
+        with patch("time.time", mytime):
+            with patch("swift.common.utils.ismount", lambda *args: True):
+                self.assertTrue(utils.check_mount('/srv', 'mounted'))
+            with patch("swift.common.utils.ismount", lambda *args: False):
+                # Should still report true since it is cached and the time has
+                # not advanced more than a second.
+                self.assertTrue(utils.check_mount('/srv', 'mounted'))
+                counter[0] += (utils.CHECK_MOUNT_CACHE_TIME + 1)
+                # Now it should recheck and see that it is not mounted.
+                self.assertFalse(utils.check_mount('/srv', 'mounted'))
 
     def test_parse_content_type(self):
         self.assertEquals(utils.parse_content_type('text/plain'),
