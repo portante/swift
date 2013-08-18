@@ -19,6 +19,7 @@ from __future__ import with_statement
 import cPickle as pickle
 import os
 import time
+import socket
 import traceback
 from collections import defaultdict
 from datetime import datetime
@@ -105,6 +106,20 @@ class ObjectController(object):
             'expiring_objects'
         self.expiring_objects_container_divisor = \
             int(conf.get('expiring_objects_container_divisor') or 86400)
+        # Initialization was successful, so now apply the network chunk size
+        # parameter as the default read / write buffer size for the network
+        # sockets.
+        #
+        # NOTE WELL: This is a class setting, so until we get set this on a
+        # per-connection basis, this affects reading and writing on ALL
+        # sockets, those to the proxy servers, and those to internal servers.
+        #
+        # ** Because the primary motivation for this is to optimize how data
+        # is written back to the proxy server, we could use the value from the
+        # disk_chunk_size parameter. However, it affects all created sockets
+        # using this class so we have chosen to tie it to the
+        # network_chunk_size parameter value instead.
+        socket._fileobject.default_bufsize = self.network_chunk_size
 
     def _diskfile(self, device, partition, account, container, obj, **kwargs):
         """Utility method for instantiating a DiskFile."""

@@ -717,6 +717,51 @@ class TestObjectController(unittest.TestCase):
         finally:
             signal.signal(signal.SIGPIPE, old_handler)
 
+    def test_GET_debug_large_file(self):
+        calls = [0]
+
+        def handler(_junk1, _junk2):
+            calls[0] += 1
+
+        old_handler = signal.signal(signal.SIGPIPE, handler)
+        try:
+            prolis = _test_sockets[0]
+            sock = connect_tcp(('localhost', prolis.getsockname()[1]))
+            fd = sock.makefile()
+            obj = 'a' * (1024 * 1024)
+            path = '/v1/a/c/o.large'
+            fd.write('PUT %s HTTP/1.1\r\n'
+                     'Host: localhost\r\n'
+                     'Connection: close\r\n'
+                     'X-Storage-Token: t\r\n'
+                     'Content-Length: %s\r\n'
+                     'Content-Type: application/octet-stream\r\n'
+                     '\r\n%s' % (path, str(len(obj)), obj))
+            fd.flush()
+            headers = readuntil2crlfs(fd)
+            exp = 'HTTP/1.1 201'
+            self.assertEqual(headers[:len(exp)], exp)
+
+            sock = connect_tcp(('localhost', prolis.getsockname()[1]))
+            fd = sock.makefile('wb', 65536)
+            fd.write('GET %s HTTP/1.1\r\n'
+                     'Host: localhost\r\n'
+                     'Connection: close\r\n'
+                     'X-Storage-Token: t\r\n'
+                     'Content-Length: 0\r\n\r\n' % path)
+            fd.flush()
+            headers = readuntil2crlfs(fd)
+            exp = 'HTTP/1.1 200'
+            self.assertEqual(headers[:len(exp)], exp)
+
+            while True:
+                buf = fd.read(100000)
+                if not buf:
+                    break
+                print len(buf)
+        finally:
+            signal.signal(signal.SIGPIPE, old_handler)
+
     def test_PUT_expect_header_zero_content_length(self):
         test_errors = []
 
