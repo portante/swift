@@ -217,10 +217,6 @@ class TestConstraints(unittest.TestCase):
             self.assertFalse(constraints.check_mount('/srv', 'foo/bar'))
             self.assertFalse(constraints.check_mount('/srv', 'foo?bar'))
 
-    def test_check_float(self):
-        self.assertFalse(constraints.check_float(''))
-        self.assertTrue(constraints.check_float('0'))
-
     def test_check_utf8(self):
         unicode_sample = u'\uc77c\uc601'
         valid_utf8_str = unicode_sample.encode('utf-8')

@@ -65,7 +65,7 @@ class TestContainerController(unittest.TestCase):
         # Ensure no acl by default
         req = Request.blank(
             '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT'},
-            headers={'X-Timestamp': '0'})
+            headers={'X-Timestamp': normalize_timestamp('0')})
         resp = req.get_response(self.controller)
         self.assert_(resp.status.startswith('201'))
         req = Request.blank(
@@ -77,7 +77,8 @@ class TestContainerController(unittest.TestCase):
         # Ensure POSTing acls works
         req = Request.blank(
             '/sda1/p/a/c', environ={'REQUEST_METHOD': 'POST'},
-            headers={'X-Timestamp': '1', 'X-Container-Read': '.r:*',
+            headers={'X-Timestamp': normalize_timestamp('1'),
+                     'X-Container-Read': '.r:*',
                      'X-Container-Write': 'account:user'})
         resp = req.get_response(self.controller)
         self.assert_(resp.status.startswith('204'))
@@ -91,7 +92,8 @@ class TestContainerController(unittest.TestCase):
         # Ensure we can clear acls on POST
         req = Request.blank(
             '/sda1/p/a/c', environ={'REQUEST_METHOD': 'POST'},
-            headers={'X-Timestamp': '3', 'X-Container-Read': '',
+            headers={'X-Timestamp': normalize_timestamp('3'),
+                     'X-Container-Read': '',
                      'X-Container-Write': ''})
         resp = req.get_response(self.controller)
         self.assert_(resp.status.startswith('204'))
@@ -104,7 +106,8 @@ class TestContainerController(unittest.TestCase):
         # Ensure PUTing acls works
         req = Request.blank(
             '/sda1/p/a/c2', environ={'REQUEST_METHOD': 'PUT'},
-            headers={'X-Timestamp': '4', 'X-Container-Read': '.r:*',
+            headers={'X-Timestamp': normalize_timestamp('4'),
+                     'X-Container-Read': '.r:*',
                      'X-Container-Write': 'account:user'})
         resp = req.get_response(self.controller)
         self.assert_(resp.status.startswith('201'))
@@ -118,11 +121,9 @@ class TestContainerController(unittest.TestCase):
     def test_HEAD(self):
         req = Request.blank(
             '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT',
-            'HTTP_X_TIMESTAMP': '0'})
+            'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         req.get_response(self.controller)
-        req = Request.blank(
-            '/sda1/p/a/c', environ={'REQUEST_METHOD': 'HEAD',
-            'HTTP_X_TIMESTAMP': '0'})
+        req = Request.blank('/sda1/p/a/c', environ={'REQUEST_METHOD': 'HEAD'})
         response = req.get_response(self.controller)
         self.assert_(response.status.startswith('204'))
         self.assertEquals(int(response.headers['x-container-bytes-used']), 0)
@@ -130,7 +131,8 @@ class TestContainerController(unittest.TestCase):
         req2 = Request.blank(
             '/sda1/p/a/c/o', environ={
                 'REQUEST_METHOD': 'PUT',
-                'HTTP_X_TIMESTAMP': '1', 'HTTP_X_SIZE': 42,
+                'HTTP_X_TIMESTAMP': normalize_timestamp('1'),
+                'HTTP_X_SIZE': 42,
                 'HTTP_X_CONTENT_TYPE': 'text/plain', 'HTTP_X_ETAG': 'x'})
         req2.get_response(self.controller)
         response = req.get_response(self.controller)
@@ -143,8 +145,10 @@ class TestContainerController(unittest.TestCase):
         self.assertEquals(resp.status_int, 404)
 
     def test_HEAD_invalid_partition(self):
-        req = Request.blank('/sda1/./a/c', environ={'REQUEST_METHOD': 'HEAD',
-                                                    'HTTP_X_TIMESTAMP': '1'})
+        req = Request.blank(
+            '/sda1/./a/c', environ={
+                'REQUEST_METHOD': 'HEAD',
+                'HTTP_X_TIMESTAMP': normalize_timestamp('1')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 400)
 
@@ -152,8 +156,9 @@ class TestContainerController(unittest.TestCase):
         self.controller = container_server.ContainerController(
             {'devices': self.testdir})
         req = Request.blank(
-            '/sda-null/p/a/c', environ={'REQUEST_METHOD': 'HEAD',
-                                        'HTTP_X_TIMESTAMP': '1'})
+            '/sda-null/p/a/c',
+            environ={'REQUEST_METHOD': 'HEAD',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('1')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 507)
 
@@ -175,19 +180,20 @@ class TestContainerController(unittest.TestCase):
     def test_PUT(self):
         req = Request.blank(
             '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT',
-            'HTTP_X_TIMESTAMP': '1'})
+            'HTTP_X_TIMESTAMP': normalize_timestamp('1')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 201)
         req = Request.blank(
             '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT',
-            'HTTP_X_TIMESTAMP': '2'})
+            'HTTP_X_TIMESTAMP': normalize_timestamp('2')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 202)
 
     def test_PUT_obj_not_found(self):
         req = Request.blank(
             '/sda1/p/a/c/o', environ={'REQUEST_METHOD': 'PUT'},
-            headers={'X-Timestamp': '1', 'X-Size': '0',
+            headers={'X-Timestamp': normalize_timestamp('1'),
+                     'X-Size': '0',
                      'X-Content-Type': 'text/plain', 'X-ETag': 'e'})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 404)
@@ -253,14 +259,18 @@ class TestContainerController(unittest.TestCase):
         self.assert_('x-container-meta-test' not in resp.headers)
 
     def test_PUT_invalid_partition(self):
-        req = Request.blank('/sda1/./a/c', environ={'REQUEST_METHOD': 'PUT',
-                                                    'HTTP_X_TIMESTAMP': '1'})
+        req = Request.blank(
+            '/sda1/./a/c', environ={
+                'REQUEST_METHOD': 'PUT',
+                'HTTP_X_TIMESTAMP': normalize_timestamp('1')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 400)
 
     def test_PUT_timestamp_not_float(self):
-        req = Request.blank('/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT',
-                                                    'HTTP_X_TIMESTAMP': '0'})
+        req = Request.blank(
+            '/sda1/p/a/c', environ={
+                'REQUEST_METHOD': 'PUT',
+                'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         req.get_response(self.controller)
         req = Request.blank('/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT'},
                             headers={'X-Timestamp': 'not-float'})
@@ -271,8 +281,9 @@ class TestContainerController(unittest.TestCase):
         self.controller = container_server.ContainerController(
             {'devices': self.testdir})
         req = Request.blank(
-            '/sda-null/p/a/c', environ={'REQUEST_METHOD': 'PUT',
-                                        'HTTP_X_TIMESTAMP': '1'})
+            '/sda-null/p/a/c',
+            environ={'REQUEST_METHOD': 'PUT',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('1')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 507)
 
@@ -330,14 +341,18 @@ class TestContainerController(unittest.TestCase):
         self.assert_('x-container-meta-test' not in resp.headers)
 
     def test_POST_invalid_partition(self):
-        req = Request.blank('/sda1/./a/c', environ={'REQUEST_METHOD': 'POST',
-                                                    'HTTP_X_TIMESTAMP': '1'})
+        req = Request.blank(
+            '/sda1/./a/c', environ={
+                'REQUEST_METHOD': 'POST',
+                'HTTP_X_TIMESTAMP': normalize_timestamp('1')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 400)
 
     def test_POST_timestamp_not_float(self):
-        req = Request.blank('/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT',
-                                                    'HTTP_X_TIMESTAMP': '0'})
+        req = Request.blank(
+            '/sda1/p/a/c', environ={
+                'REQUEST_METHOD': 'PUT',
+                'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         req.get_response(self.controller)
         req = Request.blank('/sda1/p/a/c', environ={'REQUEST_METHOD': 'POST'},
                             headers={'X-Timestamp': 'not-float'})
@@ -348,8 +363,9 @@ class TestContainerController(unittest.TestCase):
         self.controller = container_server.ContainerController(
             {'devices': self.testdir})
         req = Request.blank(
-            '/sda-null/p/a/c', environ={'REQUEST_METHOD': 'POST',
-                                        'HTTP_X_TIMESTAMP': '1'})
+            '/sda-null/p/a/c',
+            environ={'REQUEST_METHOD': 'POST',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('1')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 507)
 
@@ -357,8 +373,9 @@ class TestContainerController(unittest.TestCase):
         self.controller = container_server.ContainerController(
             {'devices': self.testdir})
         req = Request.blank(
-            '/sda-null/p/a/c', environ={'REQUEST_METHOD': 'POST',
-                                        'HTTP_X_TIMESTAMP': '1'},
+            '/sda-null/p/a/c',
+            environ={'REQUEST_METHOD': 'POST',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('1')},
             headers={'x-container-sync-to': '192.168.0.1'})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 400)
@@ -366,15 +383,15 @@ class TestContainerController(unittest.TestCase):
     def test_POST_after_DELETE_not_found(self):
         req = Request.blank('/sda1/p/a/c',
                             environ={'REQUEST_METHOD': 'PUT'},
-                            headers={'X-Timestamp': '1'})
-        resp = req.get_response(self.controller)
+                            headers={'X-Timestamp': normalize_timestamp('1')})
+        req.get_response(self.controller)
         req = Request.blank('/sda1/p/a/c',
                             environ={'REQUEST_METHOD': 'DELETE'},
-                            headers={'X-Timestamp': '2'})
-        resp = req.get_response(self.controller)
+                            headers={'X-Timestamp': normalize_timestamp('2')})
+        req.get_response(self.controller)
         req = Request.blank('/sda1/p/a/c/',
                             environ={'REQUEST_METHOD': 'POST'},
-                            headers={'X-Timestamp': '3'})
+                            headers={'X-Timestamp': normalize_timestamp('3')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 404)
 
@@ -382,19 +399,38 @@ class TestContainerController(unittest.TestCase):
         req = Request.blank(
             '/sda1/p/a/c/o',
             environ={'REQUEST_METHOD': 'DELETE'},
-            headers={'X-Timestamp': '1'})
+            headers={'X-Timestamp': normalize_timestamp('1')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 404)
 
     def test_DELETE_container_not_found(self):
-        req = Request.blank('/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT',
-                                                    'HTTP_X_TIMESTAMP': '0'})
+        req = Request.blank(
+            '/sda1/p/a/c', environ={
+                'REQUEST_METHOD': 'PUT',
+                'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 201)
-        req = Request.blank('/sda1/p/a/c', environ={'REQUEST_METHOD': 'DELETE',
-                                                    'HTTP_X_TIMESTAMP': '1'})
+        req = Request.blank(
+            '/sda1/p/a/c', environ={
+                'REQUEST_METHOD': 'DELETE',
+                'HTTP_X_TIMESTAMP': normalize_timestamp('1')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 404)
+
+    def test_DELETE_container_no_timestamp(self):
+        req = Request.blank('/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT'})
+        resp = req.get_response(self.controller)
+        self.assertEquals(resp.status_int, 400)
+        req = Request.blank(
+            '/sda1/p/a/c', environ={
+                'REQUEST_METHOD': 'PUT',
+                'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
+        resp = req.get_response(self.controller)
+        self.assertEquals(resp.status_int, 201)
+        req = Request.blank('/sda1/p/a/c',
+                            environ={'REQUEST_METHOD': 'DELETE'})
+        resp = req.get_response(self.controller)
+        self.assertEquals(resp.status_int, 400)
 
     def test_PUT_utf8(self):
         snowman = u'\u2603'
@@ -402,7 +438,7 @@ class TestContainerController(unittest.TestCase):
         req = Request.blank(
             '/sda1/p/a/%s' % container_name, environ={
             'REQUEST_METHOD': 'PUT',
-            'HTTP_X_TIMESTAMP': '1'})
+            'HTTP_X_TIMESTAMP': normalize_timestamp('1')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 201)
 
@@ -410,7 +446,7 @@ class TestContainerController(unittest.TestCase):
         req = Request.blank(
             '/sda1/p/a/c',
             environ={'REQUEST_METHOD': 'PUT',
-                     'HTTP_X_TIMESTAMP': '1'},
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('1')},
             headers={'X-Timestamp': '0000000001.00000',
                      'X-Account-Host': '127.0.0.1:0',
                      'X-Account-Partition': '123',
@@ -424,7 +460,7 @@ class TestContainerController(unittest.TestCase):
         req = Request.blank(
             '/sda1/p/a/c',
             environ={'REQUEST_METHOD': 'PUT',
-                     'HTTP_X_TIMESTAMP': '1'},
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('1')},
             headers={'X-Timestamp': '0000000001.00000',
                      'X-Account-Host': '%s:%s' %
                      bindsock.getsockname(),
@@ -482,7 +518,7 @@ class TestContainerController(unittest.TestCase):
         req = Request.blank(
             '/sda1/p/a/c',
             environ={'REQUEST_METHOD': 'DELETE'},
-            headers={'X-Timestamp': '2'})
+            headers={'X-Timestamp': normalize_timestamp('2')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 204)
         req = Request.blank(
@@ -524,7 +560,7 @@ class TestContainerController(unittest.TestCase):
     def test_PUT_reset_container_sync(self):
         req = Request.blank(
             '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT'},
-            headers={'x-timestamp': '1',
+            headers={'x-timestamp': normalize_timestamp('1'),
                      'x-container-sync-to': 'http://127.0.0.1:12345/v1/a/c'})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 201)
@@ -539,7 +575,7 @@ class TestContainerController(unittest.TestCase):
         # Set to same value
         req = Request.blank(
             '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT'},
-            headers={'x-timestamp': '1',
+            headers={'x-timestamp': normalize_timestamp('1'),
                      'x-container-sync-to': 'http://127.0.0.1:12345/v1/a/c'})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 202)
@@ -550,7 +586,7 @@ class TestContainerController(unittest.TestCase):
         # Set to new value
         req = Request.blank(
             '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT'},
-            headers={'x-timestamp': '1',
+            headers={'x-timestamp': normalize_timestamp('1'),
                      'x-container-sync-to': 'http://127.0.0.1:12345/v1/a/c2'})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 202)
@@ -562,7 +598,7 @@ class TestContainerController(unittest.TestCase):
     def test_POST_reset_container_sync(self):
         req = Request.blank(
             '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT'},
-            headers={'x-timestamp': '1',
+            headers={'x-timestamp': normalize_timestamp('1'),
                      'x-container-sync-to': 'http://127.0.0.1:12345/v1/a/c'})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 201)
@@ -577,7 +613,7 @@ class TestContainerController(unittest.TestCase):
         # Set to same value
         req = Request.blank(
             '/sda1/p/a/c', environ={'REQUEST_METHOD': 'POST'},
-            headers={'x-timestamp': '1',
+            headers={'x-timestamp': normalize_timestamp('1'),
                      'x-container-sync-to': 'http://127.0.0.1:12345/v1/a/c'})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 204)
@@ -588,7 +624,7 @@ class TestContainerController(unittest.TestCase):
         # Set to new value
         req = Request.blank(
             '/sda1/p/a/c', environ={'REQUEST_METHOD': 'POST'},
-            headers={'x-timestamp': '1',
+            headers={'x-timestamp': normalize_timestamp('1'),
                      'x-container-sync-to': 'http://127.0.0.1:12345/v1/a/c2'})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 204)
@@ -600,17 +636,20 @@ class TestContainerController(unittest.TestCase):
     def test_DELETE(self):
         req = Request.blank(
             '/sda1/p/a/c',
-            environ={'REQUEST_METHOD': 'PUT'}, headers={'X-Timestamp': '1'})
+            environ={'REQUEST_METHOD': 'PUT'},
+            headers={'X-Timestamp': normalize_timestamp('1')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 201)
         req = Request.blank(
             '/sda1/p/a/c',
-            environ={'REQUEST_METHOD': 'DELETE'}, headers={'X-Timestamp': '2'})
+            environ={'REQUEST_METHOD': 'DELETE'},
+            headers={'X-Timestamp': normalize_timestamp('2')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 204)
         req = Request.blank(
             '/sda1/p/a/c',
-            environ={'REQUEST_METHOD': 'GET'}, headers={'X-Timestamp': '3'})
+            environ={'REQUEST_METHOD': 'GET'},
+            headers={'X-Timestamp': normalize_timestamp('3')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 404)
 
@@ -620,41 +659,48 @@ class TestContainerController(unittest.TestCase):
         # later.
         req = Request.blank(
             '/sda1/p/a/c',
-            environ={'REQUEST_METHOD': 'DELETE', 'HTTP_X_TIMESTAMP': '1'})
+            environ={'REQUEST_METHOD': 'DELETE',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('1')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 404)
 
     def test_DELETE_object(self):
         req = Request.blank(
             '/sda1/p/a/c',
-            environ={'REQUEST_METHOD': 'PUT'}, headers={'X-Timestamp': '2'})
+            environ={'REQUEST_METHOD': 'PUT'},
+            headers={'X-Timestamp': normalize_timestamp('2')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 201)
         req = Request.blank(
             '/sda1/p/a/c/o',
-            environ={'REQUEST_METHOD': 'PUT', 'HTTP_X_TIMESTAMP': '0',
+            environ={'REQUEST_METHOD': 'PUT',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('0'),
                      'HTTP_X_SIZE': 1, 'HTTP_X_CONTENT_TYPE': 'text/plain',
                      'HTTP_X_ETAG': 'x'})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 201)
         req = Request.blank(
             '/sda1/p/a/c',
-            environ={'REQUEST_METHOD': 'DELETE'}, headers={'X-Timestamp': '3'})
+            environ={'REQUEST_METHOD': 'DELETE'},
+            headers={'X-Timestamp': normalize_timestamp('3')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 409)
         req = Request.blank(
             '/sda1/p/a/c/o',
-            environ={'REQUEST_METHOD': 'DELETE'}, headers={'X-Timestamp': '4'})
+            environ={'REQUEST_METHOD': 'DELETE'},
+            headers={'X-Timestamp': normalize_timestamp('4')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 204)
         req = Request.blank(
             '/sda1/p/a/c',
-            environ={'REQUEST_METHOD': 'DELETE'}, headers={'X-Timestamp': '5'})
+            environ={'REQUEST_METHOD': 'DELETE'},
+            headers={'X-Timestamp': normalize_timestamp('5')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 204)
         req = Request.blank(
             '/sda1/p/a/c',
-            environ={'REQUEST_METHOD': 'GET'}, headers={'X-Timestamp': '6'})
+            environ={'REQUEST_METHOD': 'GET'},
+            headers={'X-Timestamp': normalize_timestamp('6')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 404)
 
@@ -686,7 +732,8 @@ class TestContainerController(unittest.TestCase):
 
         req = Request.blank(
             '/sda1/p/a/c',
-            environ={'REQUEST_METHOD': 'PUT'}, headers={'X-Timestamp': '1'})
+            environ={'REQUEST_METHOD': 'PUT'},
+            headers={'X-Timestamp': normalize_timestamp('1')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 201)
         req = Request.blank(
@@ -707,7 +754,8 @@ class TestContainerController(unittest.TestCase):
                 raise Exception(err)
         req = Request.blank(
             '/sda1/p/a/c',
-            environ={'REQUEST_METHOD': 'PUT', 'HTTP_X_TIMESTAMP': '2'})
+            environ={'REQUEST_METHOD': 'PUT',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('2')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 201)
         req = Request.blank(
@@ -728,7 +776,8 @@ class TestContainerController(unittest.TestCase):
                 raise Exception(err)
         req = Request.blank(
             '/sda1/p/a/c',
-            environ={'REQUEST_METHOD': 'PUT', 'HTTP_X_TIMESTAMP': '4'})
+            environ={'REQUEST_METHOD': 'PUT',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('4')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 201)
         req = Request.blank(
@@ -753,15 +802,17 @@ class TestContainerController(unittest.TestCase):
 
     def test_DELETE_invalid_partition(self):
         req = Request.blank(
-            '/sda1/./a/c', environ={'REQUEST_METHOD': 'DELETE',
-                                    'HTTP_X_TIMESTAMP': '1'})
+            '/sda1/./a/c',
+            environ={'REQUEST_METHOD': 'DELETE',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('1')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 400)
 
     def test_DELETE_timestamp_not_float(self):
         req = Request.blank(
-            '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT',
-                                    'HTTP_X_TIMESTAMP': '0'})
+            '/sda1/p/a/c',
+            environ={'REQUEST_METHOD': 'PUT',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         req.get_response(self.controller)
         req = Request.blank(
             '/sda1/p/a/c', environ={'REQUEST_METHOD': 'DELETE'},
@@ -773,8 +824,9 @@ class TestContainerController(unittest.TestCase):
         self.controller = container_server.ContainerController(
             {'devices': self.testdir})
         req = Request.blank(
-            '/sda-null/p/a/c', environ={'REQUEST_METHOD': 'DELETE',
-                                        'HTTP_X_TIMESTAMP': '1'})
+            '/sda-null/p/a/c',
+            environ={'REQUEST_METHOD': 'DELETE',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('1')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 507)
 
@@ -789,8 +841,9 @@ class TestContainerController(unittest.TestCase):
     def test_GET_json(self):
         # make a container
         req = Request.blank(
-            '/sda1/p/a/jsonc', environ={'REQUEST_METHOD': 'PUT',
-                                        'HTTP_X_TIMESTAMP': '0'})
+            '/sda1/p/a/jsonc',
+            environ={'REQUEST_METHOD': 'PUT',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         resp = req.get_response(self.controller)
         # test an empty container
         req = Request.blank(
@@ -804,7 +857,7 @@ class TestContainerController(unittest.TestCase):
             req = Request.blank(
                 '/sda1/p/a/jsonc/%s' % i, environ={
                     'REQUEST_METHOD': 'PUT',
-                    'HTTP_X_TIMESTAMP': '1',
+                    'HTTP_X_TIMESTAMP': normalize_timestamp('1'),
                     'HTTP_X_CONTENT_TYPE': 'text/plain',
                     'HTTP_X_ETAG': 'x',
                     'HTTP_X_SIZE': 0})
@@ -867,8 +920,9 @@ class TestContainerController(unittest.TestCase):
     def test_GET_plain(self):
         # make a container
         req = Request.blank(
-            '/sda1/p/a/plainc', environ={'REQUEST_METHOD': 'PUT',
-                                         'HTTP_X_TIMESTAMP': '0'})
+            '/sda1/p/a/plainc',
+            environ={'REQUEST_METHOD': 'PUT',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         resp = req.get_response(self.controller)
         # test an empty container
         req = Request.blank(
@@ -880,7 +934,7 @@ class TestContainerController(unittest.TestCase):
             req = Request.blank(
                 '/sda1/p/a/plainc/%s' % i, environ={
                     'REQUEST_METHOD': 'PUT',
-                    'HTTP_X_TIMESTAMP': '1',
+                    'HTTP_X_TIMESTAMP': normalize_timestamp('1'),
                     'HTTP_X_CONTENT_TYPE': 'text/plain',
                     'HTTP_X_ETAG': 'x',
                     'HTTP_X_SIZE': 0})
@@ -915,9 +969,8 @@ class TestContainerController(unittest.TestCase):
                 resp.content_type, 'text/plain',
                 'Invalid content_type for Accept: %s' % accept)
 
-            req = Request.blank(
-                '/sda1/p/a/plainc',
-                environ={'REQUEST_METHOD': 'GET'})
+            req = Request.blank('/sda1/p/a/plainc',
+                                environ={'REQUEST_METHOD': 'HEAD'})
             req.accept = accept
             resp = req.get_response(self.controller)
             self.assertEquals(
@@ -947,13 +1000,13 @@ class TestContainerController(unittest.TestCase):
         req = Request.blank(
             '/sda1/p/a/jsonc', environ={
                 'REQUEST_METHOD': 'PUT',
-                'HTTP_X_TIMESTAMP': '0'})
+                'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         resp = req.get_response(self.controller)
         for i, d in [(0, 1.5), (1, 1.0), ]:
             req = Request.blank(
                 '/sda1/p/a/jsonc/%s' % i, environ={
                     'REQUEST_METHOD': 'PUT',
-                    'HTTP_X_TIMESTAMP': d,
+                    'HTTP_X_TIMESTAMP': normalize_timestamp(d),
                     'HTTP_X_CONTENT_TYPE': 'text/plain',
                     'HTTP_X_ETAG': 'x',
                     'HTTP_X_SIZE': 0})
@@ -983,8 +1036,9 @@ class TestContainerController(unittest.TestCase):
     def test_GET_xml(self):
         # make a container
         req = Request.blank(
-            '/sda1/p/a/xmlc', environ={'REQUEST_METHOD': 'PUT',
-                                       'HTTP_X_TIMESTAMP': '0'})
+            '/sda1/p/a/xmlc',
+            environ={'REQUEST_METHOD': 'PUT',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         resp = req.get_response(self.controller)
         # fill the container
         for i in range(3):
@@ -992,7 +1046,7 @@ class TestContainerController(unittest.TestCase):
                 '/sda1/p/a/xmlc/%s' % i,
                 environ={
                     'REQUEST_METHOD': 'PUT',
-                    'HTTP_X_TIMESTAMP': '1',
+                    'HTTP_X_TIMESTAMP': normalize_timestamp('1'),
                     'HTTP_X_CONTENT_TYPE': 'text/plain',
                     'HTTP_X_ETAG': 'x',
                     'HTTP_X_SIZE': 0})
@@ -1064,15 +1118,16 @@ class TestContainerController(unittest.TestCase):
     def test_GET_marker(self):
         # make a container
         req = Request.blank(
-            '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT',
-                                    'HTTP_X_TIMESTAMP': '0'})
+            '/sda1/p/a/c',
+            environ={'REQUEST_METHOD': 'PUT',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         resp = req.get_response(self.controller)
         # fill the container
         for i in range(3):
             req = Request.blank(
                 '/sda1/p/a/c/%s' % i, environ={
                     'REQUEST_METHOD': 'PUT',
-                    'HTTP_X_TIMESTAMP': '1',
+                    'HTTP_X_TIMESTAMP': normalize_timestamp('1'),
                     'HTTP_X_CONTENT_TYPE': 'text/plain',
                     'HTTP_X_ETAG': 'x', 'HTTP_X_SIZE': 0})
             resp = req.get_response(self.controller)
@@ -1087,15 +1142,17 @@ class TestContainerController(unittest.TestCase):
     def test_weird_content_types(self):
         snowman = u'\u2603'
         req = Request.blank(
-            '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT',
-                                    'HTTP_X_TIMESTAMP': '0'})
+            '/sda1/p/a/c',
+            environ={'REQUEST_METHOD': 'PUT',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         resp = req.get_response(self.controller)
         for i, ctype in enumerate((snowman.encode('utf-8'),
                                   'text/plain; charset="utf-8"')):
             req = Request.blank(
                 '/sda1/p/a/c/%s' % i, environ={
                     'REQUEST_METHOD': 'PUT',
-                    'HTTP_X_TIMESTAMP': '1', 'HTTP_X_CONTENT_TYPE': ctype,
+                    'HTTP_X_TIMESTAMP': normalize_timestamp('1'),
+                    'HTTP_X_CONTENT_TYPE': ctype,
                     'HTTP_X_ETAG': 'x', 'HTTP_X_SIZE': 0})
             resp = req.get_response(self.controller)
             self.assertEquals(resp.status_int, 201)
@@ -1107,8 +1164,9 @@ class TestContainerController(unittest.TestCase):
 
     def test_GET_accept_not_valid(self):
         req = Request.blank(
-            '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT',
-                                    'HTTP_X_TIMESTAMP': '0'})
+            '/sda1/p/a/c',
+            environ={'REQUEST_METHOD': 'PUT',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         req.get_response(self.controller)
         req = Request.blank('/sda1/p/a/c1', environ={'REQUEST_METHOD': 'PUT'},
                             headers={'X-Put-Timestamp': '1',
@@ -1125,8 +1183,9 @@ class TestContainerController(unittest.TestCase):
     def test_GET_limit(self):
         # make a container
         req = Request.blank(
-            '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT',
-                                    'HTTP_X_TIMESTAMP': '0'})
+            '/sda1/p/a/c',
+            environ={'REQUEST_METHOD': 'PUT',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         resp = req.get_response(self.controller)
         # fill the container
         for i in range(3):
@@ -1134,7 +1193,7 @@ class TestContainerController(unittest.TestCase):
                 '/sda1/p/a/c/%s' % i,
                 environ={
                     'REQUEST_METHOD': 'PUT',
-                    'HTTP_X_TIMESTAMP': '1',
+                    'HTTP_X_TIMESTAMP': normalize_timestamp('1'),
                     'HTTP_X_CONTENT_TYPE': 'text/plain',
                     'HTTP_X_ETAG': 'x',
                     'HTTP_X_SIZE': 0})
@@ -1149,15 +1208,16 @@ class TestContainerController(unittest.TestCase):
 
     def test_GET_prefix(self):
         req = Request.blank(
-            '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT',
-                                    'HTTP_X_TIMESTAMP': '0'})
+            '/sda1/p/a/c',
+            environ={'REQUEST_METHOD': 'PUT',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         resp = req.get_response(self.controller)
         for i in ('a1', 'b1', 'a2', 'b2', 'a3', 'b3'):
             req = Request.blank(
                 '/sda1/p/a/c/%s' % i,
                 environ={
                     'REQUEST_METHOD': 'PUT',
-                    'HTTP_X_TIMESTAMP': '1',
+                    'HTTP_X_TIMESTAMP': normalize_timestamp('1'),
                     'HTTP_X_CONTENT_TYPE': 'text/plain',
                     'HTTP_X_ETAG': 'x',
                     'HTTP_X_SIZE': 0})
@@ -1169,22 +1229,25 @@ class TestContainerController(unittest.TestCase):
         self.assertEquals(resp.body.split(), ['a1', 'a2', 'a3'])
 
     def test_GET_delimiter_too_long(self):
-        req = Request.blank('/sda1/p/a/c?delimiter=xx',
-                            environ={'REQUEST_METHOD': 'GET',
-                                     'HTTP_X_TIMESTAMP': '0'})
+        req = Request.blank(
+            '/sda1/p/a/c?delimiter=xx',
+            environ={'REQUEST_METHOD': 'GET',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 412)
 
     def test_GET_delimiter(self):
         req = Request.blank(
-            '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT',
-                                    'HTTP_X_TIMESTAMP': '0'})
+            '/sda1/p/a/c',
+            environ={'REQUEST_METHOD': 'PUT',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         resp = req.get_response(self.controller)
         for i in ('US-TX-A', 'US-TX-B', 'US-OK-A', 'US-OK-B', 'US-UT-A'):
             req = Request.blank(
                 '/sda1/p/a/c/%s' % i,
                 environ={
-                    'REQUEST_METHOD': 'PUT', 'HTTP_X_TIMESTAMP': '1',
+                    'REQUEST_METHOD': 'PUT',
+                    'HTTP_X_TIMESTAMP': normalize_timestamp('1'),
                     'HTTP_X_CONTENT_TYPE': 'text/plain', 'HTTP_X_ETAG': 'x',
                     'HTTP_X_SIZE': 0})
             resp = req.get_response(self.controller)
@@ -1201,14 +1264,16 @@ class TestContainerController(unittest.TestCase):
 
     def test_GET_delimiter_xml(self):
         req = Request.blank(
-            '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT',
-                                    'HTTP_X_TIMESTAMP': '0'})
+            '/sda1/p/a/c',
+            environ={'REQUEST_METHOD': 'PUT',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         resp = req.get_response(self.controller)
         for i in ('US-TX-A', 'US-TX-B', 'US-OK-A', 'US-OK-B', 'US-UT-A'):
             req = Request.blank(
                 '/sda1/p/a/c/%s' % i,
                 environ={
-                    'REQUEST_METHOD': 'PUT', 'HTTP_X_TIMESTAMP': '1',
+                    'REQUEST_METHOD': 'PUT',
+                    'HTTP_X_TIMESTAMP': normalize_timestamp('1'),
                     'HTTP_X_CONTENT_TYPE': 'text/plain', 'HTTP_X_ETAG': 'x',
                     'HTTP_X_SIZE': 0})
             resp = req.get_response(self.controller)
@@ -1226,13 +1291,15 @@ class TestContainerController(unittest.TestCase):
 
     def test_GET_delimiter_xml_with_quotes(self):
         req = Request.blank(
-            '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT',
-                                    'HTTP_X_TIMESTAMP': '0'})
+            '/sda1/p/a/c',
+            environ={'REQUEST_METHOD': 'PUT',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         resp = req.get_response(self.controller)
         req = Request.blank(
             '/sda1/p/a/c/<\'sub\' "dir">/object',
             environ={
-                'REQUEST_METHOD': 'PUT', 'HTTP_X_TIMESTAMP': '1',
+                'REQUEST_METHOD': 'PUT',
+                'HTTP_X_TIMESTAMP': normalize_timestamp('1'),
                 'HTTP_X_CONTENT_TYPE': 'text/plain', 'HTTP_X_ETAG': 'x',
                 'HTTP_X_SIZE': 0})
         resp = req.get_response(self.controller)
@@ -1255,14 +1322,16 @@ class TestContainerController(unittest.TestCase):
 
     def test_GET_path(self):
         req = Request.blank(
-            '/sda1/p/a/c', environ={'REQUEST_METHOD': 'PUT',
-                                    'HTTP_X_TIMESTAMP': '0'})
+            '/sda1/p/a/c',
+            environ={'REQUEST_METHOD': 'PUT',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('0')})
         resp = req.get_response(self.controller)
         for i in ('US/TX', 'US/TX/B', 'US/OK', 'US/OK/B', 'US/UT/A'):
             req = Request.blank(
                 '/sda1/p/a/c/%s' % i,
                 environ={
-                    'REQUEST_METHOD': 'PUT', 'HTTP_X_TIMESTAMP': '1',
+                    'REQUEST_METHOD': 'PUT',
+                    'HTTP_X_TIMESTAMP': normalize_timestamp('1'),
                     'HTTP_X_CONTENT_TYPE': 'text/plain', 'HTTP_X_ETAG': 'x',
                     'HTTP_X_SIZE': 0})
             resp = req.get_response(self.controller)
@@ -1284,8 +1353,9 @@ class TestContainerController(unittest.TestCase):
         self.controller = container_server.ContainerController(
             {'devices': self.testdir})
         req = Request.blank(
-            '/sda-null/p/a/c', environ={'REQUEST_METHOD': 'GET',
-                                        'HTTP_X_TIMESTAMP': '1'})
+            '/sda-null/p/a/c',
+            environ={'REQUEST_METHOD': 'GET',
+                     'HTTP_X_TIMESTAMP': normalize_timestamp('1')})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 507)
 
@@ -1438,57 +1508,33 @@ class TestContainerController(unittest.TestCase):
                    'x-size': '0',
                    'x-content-type': 'text/plain',
                    'x-etag': 'd41d8cd98f00b204e9800998ecf8427e'}
+        env = {'REQUEST_METHOD': 'PUT'}
+        url_resp = [
+            ('/sda1/p/a/c/o', 404),
+            ('/sda1/p/.a/c/o', 201),
+            ('/sda1/p/a/.c/o', 404),
+            ('/sda1/p/a/.c/.o', 404),
+        ]
 
-        req = Request.blank('/sda1/p/a/c/o',
-                            environ={'REQUEST_METHOD': 'PUT'},
-                            headers=dict(headers))
-        resp = req.get_response(self.controller)
-        self.assertEquals(resp.status_int, 404)
-
-        req = Request.blank('/sda1/p/.a/c/o',
-                            environ={'REQUEST_METHOD': 'PUT'},
-                            headers=dict(headers))
-        resp = req.get_response(self.controller)
-        self.assertEquals(resp.status_int, 201)
-
-        req = Request.blank('/sda1/p/a/.c/o',
-                            environ={'REQUEST_METHOD': 'PUT'},
-                            headers=dict(headers))
-        resp = req.get_response(self.controller)
-        self.assertEquals(resp.status_int, 404)
-
-        req = Request.blank('/sda1/p/a/c/.o',
-                            environ={'REQUEST_METHOD': 'PUT'},
-                            headers=dict(headers))
-        resp = req.get_response(self.controller)
-        self.assertEquals(resp.status_int, 404)
+        for url, code in url_resp:
+            req = req = Request.blank(url, environ=env, headers=dict(headers))
+            resp = req.get_response(self.controller)
+            self.assertEquals(resp.status_int, code)
 
     def test_delete_auto_create(self):
         headers = {'x-timestamp': normalize_timestamp(1)}
+        env = {'REQUEST_METHOD': 'DELETE'}
+        url_resp = [
+            ('/sda1/p/a/c/o', 404),
+            ('/sda1/p/.a/c/o', 204),
+            ('/sda1/p/a/.c/o', 404),
+            ('/sda1/p/a/.c/.o', 404),
+        ]
 
-        req = Request.blank('/sda1/p/a/c/o',
-                            environ={'REQUEST_METHOD': 'DELETE'},
-                            headers=dict(headers))
-        resp = req.get_response(self.controller)
-        self.assertEquals(resp.status_int, 404)
-
-        req = Request.blank('/sda1/p/.a/c/o',
-                            environ={'REQUEST_METHOD': 'DELETE'},
-                            headers=dict(headers))
-        resp = req.get_response(self.controller)
-        self.assertEquals(resp.status_int, 204)
-
-        req = Request.blank('/sda1/p/a/.c/o',
-                            environ={'REQUEST_METHOD': 'DELETE'},
-                            headers=dict(headers))
-        resp = req.get_response(self.controller)
-        self.assertEquals(resp.status_int, 404)
-
-        req = Request.blank('/sda1/p/a/.c/.o',
-                            environ={'REQUEST_METHOD': 'DELETE'},
-                            headers=dict(headers))
-        resp = req.get_response(self.controller)
-        self.assertEquals(resp.status_int, 404)
+        for url, code in url_resp:
+            req = req = Request.blank(url, environ=env, headers=dict(headers))
+            resp = req.get_response(self.controller)
+            self.assertEquals(resp.status_int, code)
 
     def test_content_type_on_HEAD(self):
         Request.blank('/sda1/p/a/o',
@@ -1554,7 +1600,7 @@ class TestContainerController(unittest.TestCase):
         req = Request.blank(
             '/sda1/p/a/c',
             environ={'REQUEST_METHOD': 'PUT'},
-            headers={'X-Timestamp': '12345',
+            headers={'X-Timestamp': normalize_timestamp('12345'),
                      'X-Account-Partition': '30',
                      'X-Account-Host': '1.2.3.4:5, 6.7.8.9:10',
                      'X-Account-Device': 'sdb1, sdf1'})

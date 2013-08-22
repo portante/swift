@@ -176,20 +176,6 @@ def check_mount(root, drive):
     return ismount(path)
 
 
-def check_float(string):
-    """
-    Helper function for checking if a string can be converted to a float.
-
-    :param string: string to be verified as a float
-    :returns: True if the string can be converted to a float, False otherwise
-    """
-    try:
-        float(string)
-        return True
-    except ValueError:
-        return False
-
-
 def check_utf8(string):
     """
     Validate if a string is valid UTF-8 str or unicode and that it

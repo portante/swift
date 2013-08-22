@@ -50,6 +50,7 @@ METADATA_KEY = 'user.swift.metadata'
 # These are system-set metadata keys that cannot be changed with a POST.
 # They should be lowercase.
 DATAFILE_SYSTEM_META = set('content-length content-type deleted etag'.split())
+ZERO_TIMESTAMP = normalize_timestamp(0)
 
 
 def read_metadata(fd):

@@ -22,7 +22,7 @@ from swob in here without creating circular imports.
 
 from swift.common.constraints import FORMAT2CONTENT_TYPE
 from swift.common.swob import HTTPBadRequest, HTTPNotAcceptable
-from swift.common.ondisk import validate_device_partition
+from swift.common.ondisk import validate_device_partition, normalize_timestamp
 from swift.common.utils import split_path
 from urllib import unquote
 
@@ -88,3 +88,32 @@ def split_and_validate_path(request, minsegs=1, maxsegs=None,
     except ValueError as err:
         raise HTTPBadRequest(body=str(err), request=request,
                              content_type='text/plain')
+
+
+def request_timestamp(req):
+    """
+    Utility function to pull and validate the X-Timestamp header of a request.
+
+    :param req: request object
+    :returns: floating point timestamp from X-Timestamp header, and the
+              original header value
+    :raises: HTTPBadRequest if the X-Timestamp header is missing or if it is
+             not a valid floating point value, or if the value is negative.
+    """
+    try:
+        orig_ts = req.headers['x-timestamp']
+    except KeyError:
+        raise HTTPBadRequest(body='Missing timestamp', request=req,
+                             content_type='text/plain')
+    try:
+        req_timestamp = float(orig_ts)
+    except ValueError:
+        raise HTTPBadRequest(body='Bad timestamp', request=req,
+                             content_type='text/plain')
+    if normalize_timestamp(req_timestamp) != orig_ts:
+        raise HTTPBadRequest(body='Bad timestamp', request=req,
+                             content_type='text/plain')
+    if req_timestamp < 0.0:
+        raise HTTPBadRequest(body='Bad timestamp', request=req,
+                             content_type='text/plain')
+    return orig_ts

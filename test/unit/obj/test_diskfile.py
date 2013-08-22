@@ -404,7 +404,8 @@ class TestDiskFile(unittest.TestCase):
         # write some new metadata (fast POST, don't send orig meta, ts 42)
         df = diskfile.DiskFile(self.testdir, 'sda1', '0', 'a', 'c', 'o',
                                FakeLogger())
-        df.put_metadata({'X-Timestamp': '42', 'X-Object-Meta-Key2': 'Value2'})
+        df.put_metadata({'X-Timestamp': normalize_timestamp(42),
+                         'X-Object-Meta-Key2': 'Value2'})
         df = diskfile.DiskFile(self.testdir, 'sda1', '0', 'a', 'c', 'o',
                                FakeLogger())
         with df.open():
@@ -548,10 +549,9 @@ class TestDiskFile(unittest.TestCase):
                                obj_name, FakeLogger())
         data = '0' * fsize
         etag = md5()
-        if ts:
-            timestamp = ts
-        else:
-            timestamp = str(normalize_timestamp(time()))
+        if ts is None:
+            ts = time()
+        timestamp = normalize_timestamp(ts)
         with df.create() as writer:
             writer.write(data)
             etag.update(data)
@@ -669,20 +669,20 @@ class TestDiskFile(unittest.TestCase):
 
     def test_put_metadata(self):
         df = self._get_disk_file()
-        ts = time()
+        ts = normalize_timestamp(time())
         metadata = {'X-Timestamp': ts, 'X-Object-Meta-test': 'data'}
         df.put_metadata(metadata)
-        exp_name = '%s.meta' % str(normalize_timestamp(ts))
+        exp_name = '%s.meta' % ts
         dl = os.listdir(df.datadir)
         self.assertEquals(len(dl), 2)
         self.assertTrue(exp_name in set(dl))
 
     def test_put_metadata_ts(self):
         df = self._get_disk_file()
-        ts = time()
+        ts = normalize_timestamp(time())
         metadata = {'X-Timestamp': ts, 'X-Object-Meta-test': 'data'}
         df.put_metadata(metadata, tombstone=True)
-        exp_name = '%s.ts' % str(normalize_timestamp(ts))
+        exp_name = '%s.ts' % ts
         dl = os.listdir(df.datadir)
         self.assertEquals(len(dl), 1)
         self.assertTrue(exp_name in set(dl))

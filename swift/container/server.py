@@ -28,14 +28,13 @@ import swift.common.db
 from swift.container.backend import ContainerBroker
 from swift.common.db import DatabaseAlreadyExists
 from swift.common.request_helpers import get_param, get_listing_content_type, \
-    split_and_validate_path
+    split_and_validate_path, request_timestamp
 from swift.common.utils import get_logger, public, validate_sync_to, \
     config_true_value, json, timing_stats, replication, \
     override_bytes_from_content_type
-from swift.common.ondisk import hash_path, normalize_timestamp, \
-    storage_directory
+from swift.common.ondisk import hash_path, storage_directory
 from swift.common.constraints import CONTAINER_LISTING_LIMIT, \
-    check_mount, check_float, check_utf8
+    check_mount, check_utf8
 from swift.common.bufferedhttp import http_connect
 from swift.common.exceptions import ConnectionTimeout
 from swift.common.db_replicator import ReplicatorRpc
@@ -185,24 +184,20 @@ class ContainerController(object):
         """Handle HTTP DELETE request."""
         drive, part, account, container, obj = split_and_validate_path(
             req, 4, 5, True)
-        if 'x-timestamp' not in req.headers or \
-                not check_float(req.headers['x-timestamp']):
-            return HTTPBadRequest(body='Missing timestamp', request=req,
-                                  content_type='text/plain')
+        x_timestamp = request_timestamp(req)
         if self.mount_check and not check_mount(self.root, drive):
             return HTTPInsufficientStorage(drive=drive, request=req)
         broker = self._get_container_broker(drive, part, account, container)
         if account.startswith(self.auto_create_account_prefix) and obj and \
                 not os.path.exists(broker.db_file):
             try:
-                broker.initialize(normalize_timestamp(
-                    req.headers.get('x-timestamp') or time.time()))
+                broker.initialize(x_timestamp)
             except DatabaseAlreadyExists:
                 pass
         if not os.path.exists(broker.db_file):
             return HTTPNotFound()
         if obj:     # delete object
-            broker.delete_object(obj, req.headers.get('x-timestamp'))
+            broker.delete_object(obj, x_timestamp)
             return HTTPNoContent(request=req)
         else:
             # delete container
@@ -210,7 +205,7 @@ class ContainerController(object):
                 return HTTPConflict(request=req)
             existed = float(broker.get_info()['put_timestamp']) and \
                 not broker.is_deleted()
-            broker.delete_db(req.headers['X-Timestamp'])
+            broker.delete_db(x_timestamp)
             if not broker.is_deleted():
                 return HTTPConflict(request=req)
             resp = self.account_update(req, account, container, broker)
@@ -226,10 +221,7 @@ class ContainerController(object):
         """Handle HTTP PUT request."""
         drive, part, account, container, obj = split_and_validate_path(
             req, 4, 5, True)
-        if 'x-timestamp' not in req.headers or \
-                not check_float(req.headers['x-timestamp']):
-            return HTTPBadRequest(body='Missing timestamp', request=req,
-                                  content_type='text/plain')
+        x_timestamp = request_timestamp(req)
         if 'x-container-sync-to' in req.headers:
             err = validate_sync_to(req.headers['x-container-sync-to'],
                                    self.allowed_sync_hosts)
@@ -237,36 +229,35 @@ class ContainerController(object):
                 return HTTPBadRequest(err)
         if self.mount_check and not check_mount(self.root, drive):
             return HTTPInsufficientStorage(drive=drive, request=req)
-        timestamp = normalize_timestamp(req.headers['x-timestamp'])
         broker = self._get_container_broker(drive, part, account, container)
         if obj:     # put container object
             if account.startswith(self.auto_create_account_prefix) and \
                     not os.path.exists(broker.db_file):
                 try:
-                    broker.initialize(timestamp)
+                    broker.initialize(x_timestamp)
                 except DatabaseAlreadyExists:
                     pass
             if not os.path.exists(broker.db_file):
                 return HTTPNotFound()
-            broker.put_object(obj, timestamp, int(req.headers['x-size']),
+            broker.put_object(obj, x_timestamp, int(req.headers['x-size']),
                               req.headers['x-content-type'],
                               req.headers['x-etag'])
             return HTTPCreated(request=req)
         else:   # put container
             if not os.path.exists(broker.db_file):
                 try:
-                    broker.initialize(timestamp)
+                    broker.initialize(x_timestamp)
                     created = True
                 except DatabaseAlreadyExists:
                     pass
             else:
                 created = broker.is_deleted()
-                broker.update_put_timestamp(timestamp)
+                broker.update_put_timestamp(x_timestamp)
                 if broker.is_deleted():
                     return HTTPConflict(request=req)
             metadata = {}
             metadata.update(
-                (key, (value, timestamp))
+                (key, (value, x_timestamp))
                 for key, value in req.headers.iteritems()
                 if key.lower() in self.save_headers or
                 key.lower().startswith('x-container-meta-'))
@@ -436,10 +427,7 @@ class ContainerController(object):
     def POST(self, req):
         """Handle HTTP POST request."""
         drive, part, account, container = split_and_validate_path(req, 4)
-        if 'x-timestamp' not in req.headers or \
-                not check_float(req.headers['x-timestamp']):
-            return HTTPBadRequest(body='Missing or bad timestamp',
-                                  request=req, content_type='text/plain')
+        x_timestamp = request_timestamp(req)
         if 'x-container-sync-to' in req.headers:
             err = validate_sync_to(req.headers['x-container-sync-to'],
                                    self.allowed_sync_hosts)
@@ -450,10 +438,10 @@ class ContainerController(object):
         broker = self._get_container_broker(drive, part, account, container)
         if broker.is_deleted():
             return HTTPNotFound(request=req)
-        timestamp = normalize_timestamp(req.headers['x-timestamp'])
         metadata = {}
         metadata.update(
-            (key, (value, timestamp)) for key, value in req.headers.iteritems()
+            (key, (value, x_timestamp))
+            for key, value in req.headers.iteritems()
             if key.lower() in self.save_headers or
             key.lower().startswith('x-container-meta-'))
         if metadata:
