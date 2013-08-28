@@ -339,6 +339,8 @@ class DiskWriter(object):
         if not self.tmppath:
             raise ValueError("tmppath is unusable.")
         timestamp = normalize_timestamp(metadata['X-Timestamp'])
+        if timestamp != metadata['X-Timestamp']:
+            raise ValueError("X-Timestamp metadata not valid.")
         metadata['name'] = self.disk_file.name
         target_path = join(self.disk_file.datadir, timestamp + extension)
 
@@ -482,11 +484,24 @@ class DiskFile(object):
 
     def _construct_from_ts_file(self, ts_file):
         """
-        A tombstone means the object is considered deleted. We just need to
-        pull the metadata from the tombstone file which has the timestamp.
+        Finish the construction of the DiskFile object using a tombstone
+        marker file, object is still considered deleted. We pull the metadata
+        from the tombstone file, verify the timestamp matches its name, and
+        add the 'deleted' metadata for insurance.
         """
         with open(ts_file) as fp:
             self._metadata = read_metadata(fp)
+        bname = os.path.basename(ts_file).replace('.ts', '')
+        try:
+            m_x_timestamp = self._metadata['X-Timestamp']
+        except KeyError:
+            raise DiskFileError(
+                "Missing metadata timestamp on %s" % ts_file)
+        else:
+            if bname != m_x_timestamp:
+                raise DiskFileError("Metadata timestamp, %s, does not"
+                                    " match file name, %s" % (
+                                        m_x_timestamp, bname))
         self._metadata['deleted'] = True
 
     def _verify_name(self):
@@ -508,16 +523,31 @@ class DiskFile(object):
 
     def _construct_from_data_file(self, data_file, meta_file):
         """
-        Open the data file to fetch its metadata, and fetch the metadata from
-        the fast-POST .meta file as well if it exists, merging them properly.
+        Finish the construction of the DiskFile object using a data file, and
+        optional meta file. Both the data file and meta file timestamps are
+        compared against their names. When we have a meta file, we also ensure
+        the system metadata keys from the datafile are added to the metadata
+        read from the meta file.
 
         :returns: the opened data file pointer
         """
         fp = open(data_file, 'rb')
         datafile_metadata = read_metadata(fp)
+        bname = os.path.basename(data_file).replace('.data', '')
+        if bname != datafile_metadata['X-Timestamp']:
+            raise DiskFileError("Metadata timestamp, %s, does not"
+                                " match file name, %s" % (
+                                    datafile_metadata['X-Timestamp'],
+                                    data_file))
         if meta_file:
             with open(meta_file) as mfp:
                 self._metadata = read_metadata(mfp)
+            bname = os.path.basename(meta_file).replace('.meta', '')
+            if bname != self._metadata['X-Timestamp']:
+                raise DiskFileError("Metadata timestamp, %s, does not"
+                                    " match file name, %s" % (
+                                        self._metadata['X-Timestamp'],
+                                        meta_file))
             sys_metadata = dict(
                 [(key, val) for key, val in datafile_metadata.iteritems()
                  if key.lower() in DATAFILE_SYSTEM_META])

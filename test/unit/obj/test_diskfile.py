@@ -689,9 +689,9 @@ class TestDiskFile(unittest.TestCase):
 
     def test_delete(self):
         df = self._get_disk_file()
-        ts = time()
+        ts = normalize_timestamp(time())
         df.delete(ts)
-        exp_name = '%s.ts' % str(normalize_timestamp(ts))
+        exp_name = '%s.ts' % ts
         dl = os.listdir(df.datadir)
         self.assertEquals(len(dl), 1)
         self.assertTrue(exp_name in set(dl))
