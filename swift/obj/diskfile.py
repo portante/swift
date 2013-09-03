@@ -414,20 +414,17 @@ class DiskFile(object):
     :param obj: object name for the object
     :param disk_chunk_size: size of chunks on file reads
     :param bytes_per_sync: number of bytes between fdatasync calls
-    :param iter_hook: called when __iter__ returns a chunk
     :param threadpool: thread pool in which to do blocking operations
     """
 
     def __init__(self, path, device, partition, account, container, obj,
                  logger, disk_chunk_size=65536,
-                 bytes_per_sync=(512 * 1024 * 1024),
-                 iter_hook=None, threadpool=None, obj_dir='objects',
-                 mount_check=False):
+                 bytes_per_sync=(512 * 1024 * 1024), threadpool=None,
+                 obj_dir='objects', mount_check=False):
         if mount_check and not check_mount(path, device):
             raise DiskFileDeviceUnavailable()
         self.disk_chunk_size = disk_chunk_size
         self.bytes_per_sync = bytes_per_sync
-        self.iter_hook = iter_hook
         self.name = '/' + '/'.join((account, container, obj))
         name_hash = hash_path(account, container, obj)
         self.datadir = join(
@@ -552,8 +549,6 @@ class DiskFile(object):
                                          read - dropped_cache)
                         dropped_cache = read
                     yield chunk
-                    if self.iter_hook:
-                        self.iter_hook()
                 else:
                     self.read_to_eof = True
                     self._drop_cache(self.fp.fileno(), dropped_cache,

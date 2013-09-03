@@ -376,7 +376,6 @@ class ObjectController(object):
                         return HTTPRequestTimeout(request=request)
                     etag.update(chunk)
                     writer.write(chunk)
-                    sleep()
                     elapsed_time += time.time() - start_time
                 upload_size = writer.upload_size
                 if upload_size:
@@ -435,7 +434,7 @@ class ObjectController(object):
             split_and_validate_path(request, 5, 5, True)
         try:
             disk_file = self._diskfile(device, partition, account, container,
-                                       obj, iter_hook=sleep)
+                                       obj)
         except DiskFileDeviceUnavailable:
             return HTTPInsufficientStorage(drive=device, request=request)
         disk_file.open()

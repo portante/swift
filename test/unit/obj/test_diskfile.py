@@ -501,19 +501,6 @@ class TestDiskFile(unittest.TestCase):
                                'o', FakeLogger()).create():
             self.assert_(os.path.exists(tmpdir))
 
-    def test_iter_hook(self):
-        hook_call_count = [0]
-
-        def hook():
-            hook_call_count[0] += 1
-
-        df = self._get_disk_file(fsize=65, csize=8, iter_hook=hook)
-        with df.open():
-            for _ in df:
-                pass
-
-        self.assertEquals(hook_call_count[0], 9)
-
     def test_quarantine(self):
         df = self._create_test_file('')  # empty
         df.quarantine()
@@ -541,8 +528,7 @@ class TestDiskFile(unittest.TestCase):
 
     def _get_disk_file(self, invalid_type=None, obj_name='o',
                        fsize=1024, csize=8, mark_deleted=False, ts=None,
-                       iter_hook=None, mount_check=False,
-                       extra_metadata=None):
+                       mount_check=False, extra_metadata=None):
         '''returns a DiskFile'''
         df = diskfile.DiskFile(self.testdir, 'sda1', '0', 'a', 'c',
                                obj_name, FakeLogger())
@@ -582,8 +568,7 @@ class TestDiskFile(unittest.TestCase):
 
         df = diskfile.DiskFile(self.testdir, 'sda1', '0', 'a', 'c',
                                obj_name, FakeLogger(),
-                               disk_chunk_size=csize,
-                               iter_hook=iter_hook, mount_check=mount_check)
+                               disk_chunk_size=csize, mount_check=mount_check)
         df.open()
         if invalid_type == 'Zero-Byte':
             fp = open(df.data_file, 'w')
