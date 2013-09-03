@@ -18,12 +18,14 @@ import unittest
 import mock
 import os
 import time
+import errno
 from shutil import rmtree
 from hashlib import md5
 from tempfile import mkdtemp
 from test.unit import FakeLogger
 from swift.obj import auditor
-from swift.obj.diskfile import DiskFile, write_metadata, invalidate_hash
+from swift.obj.diskfile import DiskFile, write_metadata, invalidate_hash, \
+    read_metadata
 from swift.obj.server import DATADIR
 from swift.common.utils import mkdirs
 from swift.common.ondisk import hash_path, normalize_timestamp, \
@@ -68,7 +70,7 @@ class TestAuditor(unittest.TestCase):
             writer.write(data)
             etag.update(data)
             etag = etag.hexdigest()
-            timestamp = str(normalize_timestamp(time.time()))
+            timestamp = normalize_timestamp(time.time())
             metadata = {
                 'ETag': etag,
                 'X-Timestamp': timestamp,
@@ -92,7 +94,7 @@ class TestAuditor(unittest.TestCase):
         auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
         data = '0' * 1024
         etag = md5()
-        timestamp = str(normalize_timestamp(time.time()))
+        timestamp = normalize_timestamp(time.time())
         with self.disk_file.create() as writer:
             writer.write(data)
             etag.update(data)
@@ -103,7 +105,8 @@ class TestAuditor(unittest.TestCase):
                 'Content-Length': str(os.fstat(writer.fd).st_size),
             }
             writer.put(metadata)
-            pre_quarantines = auditor_worker.quarantines
+
+        pre_quarantines = auditor_worker.quarantines
 
         # remake so it will have metadata
         self.disk_file = DiskFile(self.devices, 'sda', '0', 'a', 'c', 'o',
@@ -128,7 +131,7 @@ class TestAuditor(unittest.TestCase):
         self.assertEquals(auditor_worker.quarantines, pre_quarantines + 1)
 
     def test_object_audit_no_meta(self):
-        timestamp = str(normalize_timestamp(time.time()))
+        timestamp = normalize_timestamp(time.time())
         path = os.path.join(self.disk_file.datadir, timestamp + '.data')
         mkdirs(self.disk_file.datadir)
         fp = open(path, 'w')
@@ -152,8 +155,8 @@ class TestAuditor(unittest.TestCase):
 
         def blowup(*args):
             raise NameError('tpyo')
-        with mock.patch('swift.obj.diskfile.DiskFile',
-                        blowup):
+
+        with mock.patch('swift.obj.diskfile.get_ondisk_file', blowup):
             self.assertRaises(NameError, auditor_worker.object_audit,
                               path, 'sda', '0')
 
@@ -167,112 +170,203 @@ class TestAuditor(unittest.TestCase):
 
         def blowup(*args):
             raise NameError('tpyo')
-        with mock.patch('swift.obj.diskfile.DiskFile',
-                        blowup):
+
+        with mock.patch('swift.obj.diskfile.get_ondisk_file', blowup):
             auditor_worker.failsafe_object_audit(path, 'sda', '0')
         self.assertEquals(auditor_worker.errors, 1)
 
-    def test_generic_exception_handling(self):
+    def test_object_audit_path_gone(self):
+        timestamp = normalize_timestamp(time.time())
+        path = os.path.join(self.disk_file.datadir, timestamp + '.data')
+        mkdirs(self.disk_file.datadir)
+        invalidate_hash(os.path.dirname(self.disk_file.datadir))
         auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
-        timestamp = str(normalize_timestamp(time.time()))
-        pre_errors = auditor_worker.errors
-        data = '0' * 1024
+        pre_quarantines = auditor_worker.quarantines
+        auditor_worker.object_audit(path, 'sda', '0')
+        self.assertEquals(auditor_worker.quarantines, pre_quarantines)
+
+    def test_object_audit_path_old(self):
+        t0 = time.time()
+        timestamp = normalize_timestamp(t0)
+        path = os.path.join(self.disk_file.datadir, timestamp + '.data')
+        mkdirs(self.disk_file.datadir)
+        fp = open(path, 'w')
+        fp.write('0' * 1024)
+        fp.close()
+        invalidate_hash(os.path.dirname(self.disk_file.datadir))
+        oldtimestamp = normalize_timestamp(t0 - 1)
+        oldpath = os.path.join(self.disk_file.datadir, oldtimestamp + '.data')
+        fp = open(oldpath, 'w')
+        fp.write('0' * 1024)
+        fp.close()
+        auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
+        pre_quarantines = auditor_worker.quarantines
+        auditor_worker.object_audit(
+            os.path.join(self.disk_file.datadir, oldtimestamp + '.data'),
+            'sda', '0')
+        self.assertEquals(auditor_worker.quarantines, pre_quarantines)
+
+    def _create_object(self, size, etag_suffix='', ch='0', noetag=False,
+                       extra=''):
+        timestamp = normalize_timestamp(time.time())
+        data = ch * size
         etag = md5()
         with self.disk_file.create() as writer:
             writer.write(data)
             etag.update(data)
             etag = etag.hexdigest()
             metadata = {
-                'ETag': etag,
+                'ETag': etag + etag_suffix,
                 'X-Timestamp': timestamp,
                 'Content-Length': str(os.fstat(writer.fd).st_size),
             }
+            if noetag:
+                del metadata['ETag']
             writer.put(metadata)
-        with mock.patch('swift.obj.diskfile.DiskFile',
+            if extra:
+                os.write(writer.fd, extra)
+
+    def test_generic_exception_handling(self):
+        auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
+        pre_errors = auditor_worker.errors
+        pre_quarantines = auditor_worker.quarantines
+        self._create_object(1024)
+        with mock.patch('swift.obj.diskfile.get_ondisk_file',
                         lambda *_: 1 / 0):
             auditor_worker.audit_all_objects()
+        self.assertEquals(auditor_worker.quarantines, pre_quarantines)
         self.assertEquals(auditor_worker.errors, pre_errors + 1)
 
     def test_object_run_once_pass(self):
         auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
         auditor_worker.log_time = 0
-        timestamp = str(normalize_timestamp(time.time()))
         pre_quarantines = auditor_worker.quarantines
-        data = '0' * 1024
-        etag = md5()
-        with self.disk_file.create() as writer:
-            writer.write(data)
-            etag.update(data)
-            etag = etag.hexdigest()
-            metadata = {
-                'ETag': etag,
-                'X-Timestamp': timestamp,
-                'Content-Length': str(os.fstat(writer.fd).st_size),
-            }
-            writer.put(metadata)
+        self._create_object(1024)
         auditor_worker.audit_all_objects()
         self.assertEquals(auditor_worker.quarantines, pre_quarantines)
         self.assertEquals(auditor_worker.stats_buckets[1024], 1)
         self.assertEquals(auditor_worker.stats_buckets[10240], 0)
 
+    def test_object_run_once_bad_etag(self):
+        auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
+        pre_quarantines = auditor_worker.quarantines
+        # This also exercises the drop_buffer_cache path
+        self._create_object((1024 * 1024) + 1024, etag_suffix='bad')
+        auditor_worker.audit_all_objects()
+        self.assertEquals(auditor_worker.quarantines, pre_quarantines + 1)
+
+    def test_object_run_once_missing_etag(self):
+        auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
+        pre_quarantines = auditor_worker.quarantines
+        self._create_object(1024, noetag=True)
+        auditor_worker.audit_all_objects()
+        self.assertEquals(auditor_worker.quarantines, pre_quarantines + 1)
+
+    def test_object_run_once_open_enoent(self):
+        auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
+        pre_quarantines = auditor_worker.quarantines
+        self._create_object(1024)
+
+        def mock_get_data_file(path, device, partition):
+            os.unlink(path)
+            return path, None, None
+
+        auditor_worker.get_data_file = mock_get_data_file
+        auditor_worker.audit_all_objects()
+        self.assertEquals(auditor_worker.quarantines, pre_quarantines)
+
+    def test_object_run_once_open_ioerror(self):
+        auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
+        pre_quarantines = auditor_worker.quarantines
+        self._create_object(1024)
+
+        def mock_open(*args, **kwargs):
+            ioerr = IOError()
+            ioerr.errno = errno.EPERM
+            raise ioerr
+
+        orig_open = auditor.__builtins__['open']
+        try:
+            auditor.__builtins__['open'] = mock_open
+            auditor_worker.audit_all_objects()
+        finally:
+            auditor.__builtins__['open'] = orig_open
+        self.assertEquals(auditor_worker.quarantines, pre_quarantines + 1)
+
+    def test_object_run_once_fstat_oserror(self):
+        auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
+        pre_quarantines = auditor_worker.quarantines
+        self._create_object(1024)
+
+        def mock_fstat(*args, **kwargs):
+            raise OSError("mocked")
+
+        with mock.patch("os.fstat", mock_fstat):
+            auditor_worker.audit_all_objects()
+        self.assertEquals(auditor_worker.quarantines, pre_quarantines + 1)
+
+    def test_object_run_once_fstat_none(self):
+        auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
+        pre_quarantines = auditor_worker.quarantines
+        self._create_object(1024)
+
+        def mock_fstat(*args, **kwargs):
+            return None
+
+        with mock.patch("os.fstat", mock_fstat):
+            auditor_worker.audit_all_objects()
+        self.assertEquals(auditor_worker.quarantines, pre_quarantines + 1)
+
+    def test_object_run_once_pass_no_stats_sizes(self):
+        conf = dict(
+            devices=self.devices,
+            mount_check='false')
+        auditor_worker = auditor.AuditorWorker(conf, self.logger)
+        self.assertEquals(auditor_worker.stats_sizes, [])
+        self.assertEquals(auditor_worker.stats_buckets['OVER'], 0)
+        auditor_worker.log_time = 0
+        pre_quarantines = auditor_worker.quarantines
+        self._create_object(1024)
+        auditor_worker.audit_all_objects()
+        self.assertEquals(auditor_worker.quarantines, pre_quarantines)
+        # Because we don't have any sizes to record, we don't record anything.
+        self.assertEquals(auditor_worker.stats_buckets['OVER'], 0)
+
+    def test_object_run_once_pass_one_stats_size(self):
+        conf = dict(
+            devices=self.devices,
+            mount_check='false',
+            object_size_stats='10')
+        auditor_worker = auditor.AuditorWorker(conf, self.logger)
+        auditor_worker.log_time = 0
+        pre_quarantines = auditor_worker.quarantines
+        self._create_object(1024)
+        auditor_worker.audit_all_objects()
+        self.assertEquals(auditor_worker.quarantines, pre_quarantines)
+        self.assertEquals(auditor_worker.stats_buckets['OVER'], 1)
+
     def test_object_run_once_no_sda(self):
         auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
-        timestamp = str(normalize_timestamp(time.time()))
         pre_quarantines = auditor_worker.quarantines
-        data = '0' * 1024
-        etag = md5()
-        with self.disk_file.create() as writer:
-            writer.write(data)
-            etag.update(data)
-            etag = etag.hexdigest()
-            metadata = {
-                'ETag': etag,
-                'X-Timestamp': timestamp,
-                'Content-Length': str(os.fstat(writer.fd).st_size),
-            }
-            writer.put(metadata)
-            os.write(writer.fd, 'extra_data')
+        self._create_object(1024, extra='extra_data')
         auditor_worker.audit_all_objects()
         self.assertEquals(auditor_worker.quarantines, pre_quarantines + 1)
 
     def test_object_run_once_multi_devices(self):
         auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
-        timestamp = str(normalize_timestamp(time.time()))
         pre_quarantines = auditor_worker.quarantines
-        data = '0' * 10
-        etag = md5()
-        with self.disk_file.create() as writer:
-            writer.write(data)
-            etag.update(data)
-            etag = etag.hexdigest()
-            metadata = {
-                'ETag': etag,
-                'X-Timestamp': timestamp,
-                'Content-Length': str(os.fstat(writer.fd).st_size),
-            }
-            writer.put(metadata)
+        self._create_object(10)
         auditor_worker.audit_all_objects()
+
         self.disk_file = DiskFile(self.devices, 'sdb', '0', 'a', 'c',
                                   'ob', self.logger)
-        data = '1' * 10
-        etag = md5()
-        with self.disk_file.create() as writer:
-            writer.write(data)
-            etag.update(data)
-            etag = etag.hexdigest()
-            metadata = {
-                'ETag': etag,
-                'X-Timestamp': timestamp,
-                'Content-Length': str(os.fstat(writer.fd).st_size),
-            }
-            writer.put(metadata)
-            os.write(writer.fd, 'extra_data')
+        self._create_object(10, ch='1', extra='extra_data')
         auditor_worker.audit_all_objects()
         self.assertEquals(auditor_worker.quarantines, pre_quarantines + 1)
 
     def test_object_run_fast_track_non_zero(self):
-        self.auditor = auditor.ObjectAuditor(self.conf)
-        self.auditor.log_time = 0
+        auditor_worker = auditor.ObjectAuditor(self.conf)
+        auditor_worker.log_time = 0
         data = '0' * 1024
         etag = md5()
         with self.disk_file.create() as writer:
@@ -281,7 +375,7 @@ class TestAuditor(unittest.TestCase):
             etag = etag.hexdigest()
             metadata = {
                 'ETag': etag,
-                'X-Timestamp': str(normalize_timestamp(time.time())),
+                'X-Timestamp': normalize_timestamp(time.time()),
                 'Content-Length': str(os.fstat(writer.fd).st_size),
             }
             writer.put(metadata)
@@ -293,9 +387,33 @@ class TestAuditor(unittest.TestCase):
 
         quarantine_path = os.path.join(self.devices,
                                        'sda', 'quarantined', 'objects')
-        self.auditor.run_once(zero_byte_fps=50)
+        auditor_worker.run_once(zero_byte_fps=50)
         self.assertFalse(os.path.isdir(quarantine_path))
-        self.auditor.run_once()
+        auditor_worker.run_once()
+        self.assertTrue(os.path.isdir(quarantine_path))
+
+    def test_object_run_name_does_not_match(self):
+        auditor_worker = auditor.ObjectAuditor(self.conf)
+        auditor_worker.log_time = 0
+        data = '0' * 1024
+        etag = md5()
+        with self.disk_file.create() as writer:
+            writer.write(data)
+            etag.update(data)
+            etag = etag.hexdigest()
+            metadata = {
+                'ETag': etag,
+                'X-Timestamp': normalize_timestamp(time.time()),
+                'Content-Length': str(os.fstat(writer.fd).st_size),
+            }
+            writer.put(metadata)
+            metadata = read_metadata(writer.fd)
+            metadata['name'] = "/a/c/doesnotexist"
+            write_metadata(writer.fd, metadata)
+
+        quarantine_path = os.path.join(self.devices,
+                                       'sda', 'quarantined', 'objects')
+        auditor_worker.run_once()
         self.assertTrue(os.path.isdir(quarantine_path))
 
     def setup_bad_zero_byte(self, with_ts=False):
@@ -303,7 +421,6 @@ class TestAuditor(unittest.TestCase):
         self.auditor.log_time = 0
         ts_file_path = ''
         if with_ts:
-
             name_hash = hash_path('a', 'c', 'o')
             dir_path = os.path.join(
                 self.devices, 'sda',
@@ -319,7 +436,7 @@ class TestAuditor(unittest.TestCase):
             etag = etag.hexdigest()
             metadata = {
                 'ETag': etag,
-                'X-Timestamp': str(normalize_timestamp(time.time())),
+                'X-Timestamp': normalize_timestamp(time.time()),
                 'Content-Length': 10,
             }
             writer.put(metadata)
@@ -362,23 +479,19 @@ class TestAuditor(unittest.TestCase):
 
     def test_object_run_fast_track_zero_check_closed(self):
         rat = [False]
+        fstat = os.fstat
 
-        class FakeFile(DiskFile):
+        def mock_fstat(*args, **kwargs):
+            rat[0] = True
+            return fstat(*args, **kwargs)
 
-            def close(self, verify_file=True):
-                rat[0] = True
-                DiskFile.close(self, verify_file=verify_file)
         self.setup_bad_zero_byte()
-        was_df = auditor.diskfile.DiskFile
-        try:
-            auditor.diskfile.DiskFile = FakeFile
+        with mock.patch("os.fstat", mock_fstat):
             self.auditor.run_once(zero_byte_fps=50)
             quarantine_path = os.path.join(self.devices,
                                            'sda', 'quarantined', 'objects')
             self.assertTrue(os.path.isdir(quarantine_path))
             self.assertTrue(rat[0])
-        finally:
-            auditor.diskfile.DiskFile = was_df
 
     def test_run_forever(self):
 
@@ -388,12 +501,16 @@ class TestAuditor(unittest.TestCase):
         class ObjectAuditorMock(object):
             check_args = ()
             check_kwargs = {}
+            raise_exception = 0
             fork_called = 0
             fork_res = 0
+            fake_logger = FakeLogger()
 
-            def mock_run(self, *args, **kwargs):
+            def mock_run_once(self, *args, **kwargs):
                 self.check_args = args
                 self.check_kwargs = kwargs
+                if self.raise_exception:
+                    raise Exception('run once exception')
 
             def mock_sleep(self):
                 raise StopForever('stop')
@@ -406,11 +523,10 @@ class TestAuditor(unittest.TestCase):
                                                 mount_check='false',
                                                 zero_byte_files_per_second=89))
         mocker = ObjectAuditorMock()
-        my_auditor.run_once = mocker.mock_run
+        my_auditor.run_once = mocker.mock_run_once
         my_auditor._sleep = mocker.mock_sleep
-        was_fork = os.fork
-        try:
-            os.fork = mocker.mock_fork
+        my_auditor.logger = mocker.fake_logger
+        with mock.patch("os.fork", mocker.mock_fork):
             self.assertRaises(StopForever,
                               my_auditor.run_forever, zero_byte_fps=50)
             self.assertEquals(mocker.check_kwargs['zero_byte_fps'], 50)
@@ -425,8 +541,12 @@ class TestAuditor(unittest.TestCase):
             self.assertEquals(mocker.fork_called, 2)
             self.assertEquals(mocker.check_kwargs['zero_byte_fps'], 89)
 
-        finally:
-            os.fork = was_fork
+            mocker.raise_exception = 1
+            self.assertRaises(StopForever, my_auditor.run_forever)
+            self.assertEquals(mocker.fork_called, 3)
+            self.assertEquals(mocker.check_args, ())
+            self.assertEquals(mocker.fake_logger.log_dict['exception'][0][2],
+                              'run once exception')
 
 if __name__ == '__main__':
     unittest.main()

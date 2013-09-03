@@ -15,6 +15,8 @@
 
 import os
 import time
+import errno
+import hashlib
 from swift import gettext_ as _
 
 from eventlet import Timeout
@@ -22,10 +24,11 @@ from eventlet import Timeout
 from swift.obj import diskfile
 from swift.obj import server as object_server
 from swift.common.utils import get_logger, ratelimit_sleep, \
-    config_true_value, dump_recon_cache, list_from_csv, json
-from swift.common.ondisk import audit_location_generator
-from swift.common.exceptions import AuditException, DiskFileError, \
-    DiskFileNotExist
+    config_true_value, dump_recon_cache, list_from_csv, json, \
+    drop_buffer_cache
+from swift.common.ondisk import audit_location_generator, hash_path, \
+    storage_directory
+from swift.common.exceptions import AuditException
 from swift.common.daemon import Daemon
 
 SLEEP_BETWEEN_AUDITS = 30
@@ -163,6 +166,120 @@ class AuditorWorker(object):
             self.errors += 1
             self.logger.exception(_('ERROR Trying to audit %s'), path)
 
+    def get_data_file(self, path, device, partition):
+        """
+        Get a valid data file name that is auditable.
+
+        :param path: a path to an object
+        :param device: the device the path is on
+        :param partition: the partition the path is on
+        :returns: a valid path to a data file
+        :raises: AuditException for inconsistent data states
+        """
+        datadir = os.path.dirname(path)
+        data_file, meta_file, ts_file = diskfile.get_ondisk_file(datadir)
+        if not data_file:
+            # TODO(portante): the audit location generator gave us a path
+            # to a .data file, but according to the current state of the
+            # on-disk files in data directory, the file is considered
+            # deleted or has been removed entirely. Perhaps we should be
+            # calling hash_cleanup_listdir() here instead.
+            return None, None, None
+        if path != data_file:
+            # TODO(portante): The audit location generator gave us a path
+            # to a .data file that is not considered the live data file
+            # for this object. We should probably invoke
+            # hash_cleanup_listdir() here instead.
+            return None, None, None
+        try:
+            metadata = diskfile.read_metadata(data_file)
+        except (Exception, Timeout) as exc:
+            raise AuditException(
+                _('Error when reading metadata: %s') % exc)
+        try:
+            name = metadata['name']
+            _junk, account, container, obj = name.split('/', 3)
+            content_length = metadata['Content-Length']
+            content_length = int(content_length)
+            etag = metadata["ETag"]
+        except (KeyError, ValueError):
+            raise AuditException(
+                _("Unable to fetch required metadata for object"))
+        name_hash = hash_path(account, container, obj)
+        computed_datadir = os.path.join(
+            self.devices, device, storage_directory(
+                object_server.DATADIR, partition, name_hash))
+        if computed_datadir != datadir:
+            raise AuditException(
+                _("Computed data directory, %s,"
+                  " does not match object's") % (
+                      computed_datadir))
+        return data_file, content_length, etag
+
+    def get_and_verify_size(self, data_file, fp, content_length):
+        """
+        Verify the file size matches the given metadata content-length,
+        returning it on success.
+
+        :param data_file: full path of the .data file on-disk
+        :param fp: open file pointer for the data_file
+        :param content_length: content length value to check against file
+                               system recorded length
+        :returns: the size of the file that matches the content-length
+        :raises: AuditException if the fstat() system call fails, or if the
+                 on-disk size does not match the content-length metdata.
+        """
+        try:
+            # Don't stat by name to avoid possible race conditions.
+            stats = os.fstat(fp.fileno())
+        except OSError as err:
+            raise AuditException(str(err))
+        else:
+            if not stats:
+                raise AuditException(
+                    _('Unable to retrieve stat of object'))
+        obj_size = stats.st_size
+        if obj_size != content_length:
+            raise AuditException(
+                _("On-disk size, %s, != metadata's size, %s") % (
+                    obj_size, content_length))
+        return obj_size
+
+    def verify_etag(self, data_file, fp, curr_etag):
+        """
+        Read the entire data file calculating the MD5 hash and comparing
+        against the current ETag.
+
+        :param data_file: full path of the .data file on-disk
+        :param fp: open file pointer for the data_file
+        :param curr_etag: the ETag stored in the data file's metadata
+        :raises: AuditException if the ETag does not match the calculated MD5
+                 hash
+        """
+        etag = hashlib.md5()
+        dropped_cache = 0
+        read = 0
+        while True:
+            chunk = fp.read(64 * 1024)
+            if chunk:
+                etag.update(chunk)
+                chunk_len = len(chunk)
+                read += chunk_len
+                if read - dropped_cache > (1024 * 1024):
+                    drop_buffer_cache(fp.fileno(), dropped_cache,
+                                      read - dropped_cache)
+                self.bytes_running_time = ratelimit_sleep(
+                    self.bytes_running_time,
+                    self.max_bytes_per_second,
+                    incr_by=chunk_len)
+                self.bytes_processed += chunk_len
+                self.total_bytes_processed += chunk_len
+            else:
+                break
+        if etag.hexdigest() != curr_etag:
+            raise AuditException(
+                _("ETag and object's MD5 do not match"))
+
     def object_audit(self, path, device, partition):
         """
         Audits the given object path.
@@ -172,41 +289,28 @@ class AuditorWorker(object):
         :param partition: the partition the path is on
         """
         try:
+            data_file, content_length, curr_etag = self.get_data_file(
+                path, device, partition)
+            if not data_file:
+                self.logger.info(_('INFO Nothing to audit at %(datadir)s'),
+                                 {'datadir': os.path.basename(path)})
+                return
             try:
-                name = diskfile.read_metadata(path)['name']
-            except (Exception, Timeout) as exc:
-                raise AuditException('Error when reading metadata: %s' % exc)
-            _junk, account, container, obj = name.split('/', 3)
-            df = diskfile.DiskFile(self.devices, device, partition,
-                                   account, container, obj, self.logger)
-            df.open()
-            try:
-                try:
-                    obj_size = df.get_data_file_size()
-                except DiskFileNotExist:
+                with open(data_file, "r") as fp:
+                    obj_size = self.get_and_verify_size(
+                        data_file, fp, content_length)
+                    if self.stats_sizes:
+                        self.record_stats(obj_size)
+                    if self.zero_byte_only_at_fps and obj_size:
+                        self.passes += 1
+                        return
+                    self.verify_etag(data_file, fp, curr_etag)
+            except IOError as err:
+                if err.errno == errno.ENOENT:
                     return
-                except DiskFileError as e:
-                    raise AuditException(str(e))
-                if self.stats_sizes:
-                    self.record_stats(obj_size)
-                if self.zero_byte_only_at_fps and obj_size:
-                    self.passes += 1
-                    return
-                for chunk in df:
-                    self.bytes_running_time = ratelimit_sleep(
-                        self.bytes_running_time, self.max_bytes_per_second,
-                        incr_by=len(chunk))
-                    self.bytes_processed += len(chunk)
-                    self.total_bytes_processed += len(chunk)
-                df.close()
-                if df.quarantined_dir:
-                    self.quarantines += 1
-                    self.logger.error(
-                        _("ERROR Object %(path)s failed audit and will be "
-                          "quarantined: ETag and file's md5 do not match"),
-                        {'path': path})
-            finally:
-                df.close(verify_file=False)
+                raise AuditException(
+                    _("Unable to open, stat, or read object: %(err)s") % (
+                        {"err": err}))
         except AuditException as err:
             self.logger.increment('quarantines')
             self.quarantines += 1

@@ -272,6 +272,63 @@ def get_hashes(partition_dir, recalculate=None, do_listdir=False,
         return hashed, hashes
 
 
+def get_ondisk_file(datadir):
+    """
+    Do the work to figure out if the data directory exists, and if so,
+    determine the on-disk files to use.
+
+    :returns: a tuple of data, meta and ts (tombstone) files, in one of
+              three states:
+
+              1. all three are None
+
+                 data directory does not exist, or there are no files in
+                 that directory
+
+              2. ts_file is not None, data_file is None, meta_file is None
+
+                 object is considered deleted
+
+              3. data_file is not None, ts_file is None
+
+                 object exists, and optionally has fast-POST metadata
+    """
+    data_file = meta_file = ts_file = None
+    try:
+        files = sorted(os.listdir(datadir), reverse=True)
+    except OSError as err:
+        if err.errno != errno.ENOENT:
+            raise
+        # The data directory does not exist, so the object cannot exist.
+    else:
+        for afile in files:
+            assert ts_file is None, "On-disk file search loop" \
+                " continuing after tombstone, %s, encountered" % ts_file
+            assert data_file is None, "On-disk file search loop" \
+                " continuing after data file, %s, encountered" % data_file
+            if afile.endswith('.ts'):
+                meta_file = None
+                ts_file = join(datadir, afile)
+                break
+            if afile.endswith('.meta') and not meta_file:
+                meta_file = join(datadir, afile)
+                # NOTE: this does not exit this loop, since a fast-POST
+                # operation just updates metadata, writing one or more
+                # .meta files, the data file will have an older timestamp,
+                # so we keep looking.
+                continue
+            if afile.endswith('.data'):
+                data_file = join(datadir, afile)
+                break
+    assert ((data_file is None and meta_file is None and ts_file is None)
+            or (ts_file is not None and data_file is None
+                and meta_file is None)
+            or (data_file is not None and ts_file is None)), \
+        "On-disk file search algorithm contract is broken: data_file:" \
+        " %s, meta_file: %s, ts_file: %s" % (data_file, meta_file, ts_file)
+    return data_file, meta_file, ts_file
+
+
 class DiskWriter(object):
     """
     Encapsulation of the write context for servicing PUT REST API
@@ -405,7 +462,7 @@ class DiskFile(object):
 
         :raises DiskFileCollision: on md5 collision
         """
-        data_file, meta_file, ts_file = self._get_ondisk_file()
+        data_file, meta_file, ts_file = get_ondisk_file(self.datadir)
         if not data_file:
             if ts_file:
                 self._construct_from_ts_file(ts_file)
@@ -422,62 +479,6 @@ class DiskFile(object):
 
     def __exit__(self, t, v, tb):
         self.close(verify_file=self._verify_close)
-
-    def _get_ondisk_file(self):
-        """
-        Do the work to figure out if the data directory exists, and if so,
-        determine the on-disk files to use.
-
-        :returns: a tuple of data, meta and ts (tombstone) files, in one of
-                  three states:
-
-                  1. all three are None
-
-                     data directory does not exist, or there are no files in
-                     that directory
-
-                  2. ts_file is not None, data_file is None, meta_file is None
-
-                     object is considered deleted
-
-                  3. data_file is not None, ts_file is None
-
-                     object exists, and optionally has fast-POST metadata
-        """
-        data_file = meta_file = ts_file = None
-        try:
-            files = sorted(os.listdir(self.datadir), reverse=True)
-        except OSError as err:
-            if err.errno != errno.ENOENT:
-                raise
-            # The data directory does not exist, so the object cannot exist.
-        else:
-            for afile in files:
-                assert ts_file is None, "On-disk file search loop" \
-                    " continuing after tombstone, %s, encountered" % ts_file
-                assert data_file is None, "On-disk file search loop" \
-                    " continuing after data file, %s, encountered" % data_file
-                if afile.endswith('.ts'):
-                    meta_file = None
-                    ts_file = join(self.datadir, afile)
-                    break
-                if afile.endswith('.meta') and not meta_file:
-                    meta_file = join(self.datadir, afile)
-                    # NOTE: this does not exit this loop, since a fast-POST
-                    # operation just updates metadata, writing one or more
-                    # .meta files, the data file will have an older timestamp,
-                    # so we keep looking.
-                    continue
-                if afile.endswith('.data'):
-                    data_file = join(self.datadir, afile)
-                    break
-        assert ((data_file is None and meta_file is None and ts_file is None)
-                or (ts_file is not None and data_file is None
-                    and meta_file is None)
-                or (data_file is not None and ts_file is None)), \
-            "On-disk file search algorithm contract is broken: data_file:" \
-            " %s, meta_file: %s, ts_file: %s" % (data_file, meta_file, ts_file)
-        return data_file, meta_file, ts_file
 
     def _construct_from_ts_file(self, ts_file):
         """
