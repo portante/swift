@@ -1,0 +1,7 @@
+#!/bin/bash
+
+cd $(dirname $0)/test/unit
+nosetests --exe --processes=2 $@
+rvalue=$?
+cd -
+exit $rvalue

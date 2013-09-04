@@ -74,6 +74,10 @@ def request_init(self, *args, **kwargs):
     _request_instances[self] = None
 
 
+_multiprocess_can_split_ = False
+_multiprocess_shared_ = False
+
+
 def setup():
     ondisk.HASH_PATH_SUFFIX = 'endcap'
     global _testdir, _test_servers, _test_sockets, \
