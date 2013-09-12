@@ -32,11 +32,10 @@ from xattr import getxattr, setxattr
 from eventlet import Timeout
 
 from swift import gettext_ as _
-from swift.common.constraints import check_mount
 from swift.common.utils import mkdirs, renamer, fallocate, fsync, fdatasync, \
     drop_buffer_cache, ThreadPool, lock_path, write_pickle
 from swift.common.ondisk import hash_path, normalize_timestamp, \
-    storage_directory
+    storage_directory, Devices
 from swift.common.exceptions import DiskFileError, DiskFileNotExist, \
     DiskFileCollision, DiskFileNoSpace, DiskFileDeviceUnavailable, \
     PathNotDir, DiskFileNotOpenError
@@ -50,6 +49,8 @@ METADATA_KEY = 'user.swift.metadata'
 # These are system-set metadata keys that cannot be changed with a POST.
 # They should be lowercase.
 DATAFILE_SYSTEM_META = set('content-length content-type deleted etag'.split())
+DATADIR = 'objects'
+ASYNCDIR = 'async_pending'
 
 
 def read_metadata(fd):
@@ -272,6 +273,51 @@ def get_hashes(partition_dir, recalculate=None, do_listdir=False,
         return hashed, hashes
 
 
+class DiskFileManager(object):
+    """
+    TODO(portante): Not sure what the right name to recommend here
+    """
+    def __init__(self, conf, logger):
+        self.hier = Devices(conf)
+        self.logger = logger
+        self.disk_chunk_size = int(conf.get('disk_chunk_size', 65536))
+        self.keep_cache_size = int(conf.get('keep_cache_size', 5242880))
+        self.bytes_per_sync = int(conf.get('mb_per_sync', 512)) * 1024 * 1024
+
+    def pickle_async_update(self, device, account, container, obj, data,
+                            timestamp):
+        device_path = self.hier.construct_dev_path(device)
+        async_dir = os.path.join(device_path, ASYNCDIR)
+        ohash = hash_path(account, container, obj)
+        self.hier.threadpools[device].run_in_thread(
+            write_pickle,
+            data,
+            os.path.join(async_dir, ohash[-3:], ohash + '-' +
+                         normalize_timestamp(timestamp)),
+            os.path.join(device_path, 'tmp'))
+        self.logger.increment('async_pendings')
+
+    def get_diskfile(self, device, partition, account, container, obj,
+                     **kwargs):
+        dev_path = self.hier.get_dev_path(device)
+        if not dev_path:
+            raise DiskFileDeviceUnavailable()
+        return DiskFile(self, dev_path, self.hier.threadpools[device],
+                        partition, account, container, obj, **kwargs)
+
+    def get_hashes(self, device, partition, suffix):
+        dev_path = self.hier.get_dev_path(device)
+        if not dev_path:
+            raise DiskFileDeviceUnavailable()
+        partition_path = os.path.join(dev_path, DATADIR, partition)
+        if not os.path.exists(partition_path):
+            mkdirs(partition_path)
+        suffixes = suffix.split('-') if suffix else []
+        _junk, hashes = self.hier.threadpools[device].force_run_in_thread(
+            get_hashes, partition_path, recalculate=suffixes)
+        return hashes
+
+
 class DiskWriter(object):
     """
     Encapsulation of the write context for servicing PUT REST API
@@ -349,35 +395,32 @@ class DiskFile(object):
     """
     Manage object files on disk.
 
-    :param path: path to devices on the node
-    :param device: device name
-    :param partition: partition on the device the object lives in
+    :param mgr: DiskFileManager
+    :param device_path: path to the target device or drive
+    :param threadpool: thread pool to use for blocking operations
+    :param partition: partition on the device in which the object lives
     :param account: account name for the object
     :param container: container name for the object
     :param obj: object name for the object
-    :param disk_chunk_size: size of chunks on file reads
-    :param bytes_per_sync: number of bytes between fdatasync calls
     :param iter_hook: called when __iter__ returns a chunk
-    :param threadpool: thread pool in which to do blocking operations
+    :param keep_cache: caller's preference for keeping data read in the cache
     """
 
-    def __init__(self, path, device, partition, account, container, obj,
-                 logger, disk_chunk_size=65536,
-                 bytes_per_sync=(512 * 1024 * 1024),
-                 iter_hook=None, threadpool=None, obj_dir='objects',
-                 mount_check=False):
-        if mount_check and not check_mount(path, device):
-            raise DiskFileDeviceUnavailable()
-        self.disk_chunk_size = disk_chunk_size
-        self.bytes_per_sync = bytes_per_sync
+    def __init__(self, mgr, device_path, threadpool, partition,
+                 account, container, obj, iter_hook=None, keep_cache=False):
+        self.mgr = mgr
+        self.device_path = device_path
+        self.threadpool = threadpool or ThreadPool(nthreads=0)
+        self.logger = mgr.logger
+        self.disk_chunk_size = mgr.disk_chunk_size
+        self.bytes_per_sync = mgr.bytes_per_sync
         self.iter_hook = iter_hook
+        self.keep_cache = keep_cache
         self.name = '/' + '/'.join((account, container, obj))
         name_hash = hash_path(account, container, obj)
         self.datadir = join(
-            path, device, storage_directory(obj_dir, partition, name_hash))
-        self.device_path = join(path, device)
-        self.tmpdir = join(path, device, 'tmp')
-        self.logger = logger
+            device_path, storage_directory(DATADIR, partition, name_hash))
+        self.tmpdir = join(device_path, 'tmp')
         self._metadata = None
         self.data_file = None
         self._data_file_size = None
@@ -388,11 +431,6 @@ class DiskFile(object):
         self.quarantined_dir = None
         self.suppress_file_closing = False
         self._verify_close = False
-        self.threadpool = threadpool or ThreadPool(nthreads=0)
-
-        # FIXME(clayg): this attribute is set after open and affects the
-        # behavior of the class (i.e. public interface)
-        self.keep_cache = False
 
     def open(self, verify_close=False):
         """
@@ -525,6 +563,11 @@ class DiskFile(object):
             self._metadata = datafile_metadata
         self._verify_name()
         self.data_file = data_file
+        if self.keep_cache:
+            # Caller suggests we keep this in cache, only do it if the
+            # object's size is less than the maximum.
+            metadata_size = int(self._metadata['Content-Length'])
+            self.keep_cache = metadata_size < self.mgr.keep_cache_size
         return fp
 
     def __iter__(self):

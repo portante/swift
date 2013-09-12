@@ -25,7 +25,7 @@ from swift.container import server as container_server
 from swift.container.backend import ContainerBroker
 from swift.common.utils import get_logger, config_true_value, \
     dump_recon_cache, ratelimit_sleep
-from swift.common.ondisk import audit_location_generator
+from swift.common.ondisk import Devices
 from swift.common.daemon import Daemon
 
 
@@ -35,8 +35,7 @@ class ContainerAuditor(Daemon):
     def __init__(self, conf):
         self.conf = conf
         self.logger = get_logger(conf, log_route='container-auditor')
-        self.devices = conf.get('devices', '/srv/node')
-        self.mount_check = config_true_value(conf.get('mount_check', 'true'))
+        self.devices = Devices(conf)
         self.interval = int(conf.get('interval', 1800))
         self.container_passes = 0
         self.container_failures = 0
@@ -50,10 +49,8 @@ class ContainerAuditor(Daemon):
         self.rcache = os.path.join(self.recon_cache_path, "container.recon")
 
     def _one_audit_pass(self, reported):
-        all_locs = audit_location_generator(self.devices,
-                                            container_server.DATADIR, '.db',
-                                            mount_check=self.mount_check,
-                                            logger=self.logger)
+        all_locs = self.devices.audit_location_generator(
+            container_server.DATADIR, '.db', logger=self.logger)
         for path, device, partition in all_locs:
             self.container_audit(path)
             if time.time() - reported >= 3600:  # once an hour

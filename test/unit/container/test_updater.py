@@ -23,7 +23,7 @@ from tempfile import mkdtemp
 
 from eventlet import spawn, Timeout, listen
 
-from swift.common import utils
+from swift.common import ondisk
 from swift.container import updater as container_updater
 from swift.container import server as container_server
 from swift.container.backend import ContainerBroker
@@ -34,8 +34,8 @@ from swift.common.ondisk import normalize_timestamp
 class TestContainerUpdater(unittest.TestCase):
 
     def setUp(self):
-        utils.HASH_PATH_SUFFIX = 'endcap'
-        utils.HASH_PATH_PREFIX = 'startcap'
+        ondisk.HASH_PATH_SUFFIX = 'endcap'
+        ondisk.HASH_PATH_PREFIX = 'startcap'
         self.testdir = os.path.join(mkdtemp(), 'tmp_test_container_updater')
         rmtree(self.testdir, ignore_errors=1)
         os.mkdir(self.testdir)
