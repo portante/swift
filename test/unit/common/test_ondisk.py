@@ -114,8 +114,19 @@ class TestOndisk(unittest.TestCase):
             ondisk.HASH_PATH_PREFIX = _prefix
 
 
-class TestAuditLocationGenerator(unittest.TestCase):
-    def test_non_dir_contents(self):
+class TestDevices(unittest.TestCase):
+
+    def test_construct_dev_path(self):
+        devs = ondisk.Devices({})
+        self.assertEquals(devs.construct_dev_path("abc"), "/srv/node/abc")
+
+    def test_get_dev_path(self):
+        devs = ondisk.Devices({})
+        self.assertEquals(devs.get_dev_path("abc"), None)
+        devs = ondisk.Devices({'mount_check': False})
+        self.assertEquals(devs.get_dev_path("abc"), "/srv/node/abc")
+
+    def test_audit_location_generator_non_dir_contents(self):
         with temptree([]) as tmpdir:
             data = os.path.join(tmpdir, "drive", "data")
             os.makedirs(data)
@@ -129,9 +140,9 @@ class TestAuditLocationGenerator(unittest.TestCase):
             os.makedirs(suffix)
             with open(os.path.join(suffix, "hash1"), "w"):
                 pass
-            locations = ondisk.audit_location_generator(
-                tmpdir, "data", mount_check=False
-            )
+            conf = {'mount_check': False, 'devices': tmpdir}
+            devs = ondisk.Devices(conf)
+            locations = devs.audit_location_generator("data")
             self.assertEqual(list(locations), [])
 
 

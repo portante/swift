@@ -29,7 +29,7 @@ from swift.common.direct_client import direct_get_object
 from swift.common.ring import Ring
 from swift.common.utils import get_logger, config_true_value, \
     validate_sync_to, whataremyips, FileLikeIter
-from swift.common.ondisk import audit_location_generator, hash_path
+from swift.common.ondisk import Devices, hash_path
 from swift.common.daemon import Daemon
 from swift.common.http import HTTP_UNAUTHORIZED, HTTP_NOT_FOUND
 
@@ -106,11 +106,8 @@ class ContainerSync(Daemon):
         self.conf = conf
         #: Logger to use for container-sync log lines.
         self.logger = get_logger(conf, log_route='container-sync')
-        #: Path to the local device mount points.
-        self.devices = conf.get('devices', '/srv/node')
-        #: Indicates whether mount points should be verified as actual mount
-        #: points (normally true, false for tests and SAIO).
-        self.mount_check = config_true_value(conf.get('mount_check', 'true'))
+        #: On-disk device manager
+        self.devices = Devices(conf)
         #: Minimum time between full scans. This is to keep the daemon from
         #: running wild on near empty systems.
         self.interval = int(conf.get('interval', 300))
@@ -155,11 +152,8 @@ class ContainerSync(Daemon):
         sleep(random() * self.interval)
         while True:
             begin = time()
-            all_locs = audit_location_generator(self.devices,
-                                                container_server.DATADIR,
-                                                '.db',
-                                                mount_check=self.mount_check,
-                                                logger=self.logger)
+            all_locs = self.devices.audit_location_generator(
+                container_server.DATADIR, '.db', logger=self.logger)
             for path, device, partition in all_locs:
                 self.container_sync(path)
                 if time() - self.reported >= 3600:  # once an hour
@@ -174,10 +168,8 @@ class ContainerSync(Daemon):
         """
         self.logger.info(_('Begin container sync "once" mode'))
         begin = time()
-        all_locs = audit_location_generator(self.devices,
-                                            container_server.DATADIR, '.db',
-                                            mount_check=self.mount_check,
-                                            logger=self.logger)
+        all_locs = self.devices.audit_location_generator(
+            container_server.DATADIR, '.db', logger=self.logger)
         for path, device, partition in all_locs:
             self.container_sync(path)
             if time() - self.reported >= 3600:  # once an hour

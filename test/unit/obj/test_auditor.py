@@ -23,8 +23,8 @@ from hashlib import md5
 from tempfile import mkdtemp
 from test.unit import FakeLogger
 from swift.obj import auditor
-from swift.obj.diskfile import DiskFile, write_metadata, invalidate_hash
-from swift.obj.server import DATADIR
+from swift.obj.diskfile import DiskFileManager, write_metadata, \
+    invalidate_hash, DATADIR
 from swift.common.utils import mkdirs
 from swift.common.ondisk import hash_path, normalize_timestamp, \
     storage_directory
@@ -53,8 +53,8 @@ class TestAuditor(unittest.TestCase):
             devices=self.devices,
             mount_check='false',
             object_size_stats='10,100,1024,10240')
-        self.disk_file = DiskFile(self.devices, 'sda', '0', 'a', 'c', 'o',
-                                  self.logger)
+        self.df_mgr = DiskFileManager(self.conf, self.logger)
+        self.disk_file = self.df_mgr.get_diskfile('sda', '0', 'a', 'c', 'o')
 
     def tearDown(self):
         rmtree(os.path.dirname(self.testdir), ignore_errors=1)
@@ -106,8 +106,7 @@ class TestAuditor(unittest.TestCase):
             pre_quarantines = auditor_worker.quarantines
 
         # remake so it will have metadata
-        self.disk_file = DiskFile(self.devices, 'sda', '0', 'a', 'c', 'o',
-                                  self.logger)
+        self.disk_file = self.df_mgr.get_diskfile('sda', '0', 'a', 'c', 'o')
 
         auditor_worker.object_audit(
             os.path.join(self.disk_file.datadir, timestamp + '.data'),
@@ -252,8 +251,7 @@ class TestAuditor(unittest.TestCase):
             }
             writer.put(metadata)
         auditor_worker.audit_all_objects()
-        self.disk_file = DiskFile(self.devices, 'sdb', '0', 'a', 'c',
-                                  'ob', self.logger)
+        self.disk_file = self.df_mgr.get_diskfile('sda', '0', 'a', 'c', 'ob')
         data = '1' * 10
         etag = md5()
         with self.disk_file.create() as writer:
@@ -362,6 +360,7 @@ class TestAuditor(unittest.TestCase):
 
     def test_object_run_fast_track_zero_check_closed(self):
         rat = [False]
+        from swift.obj.diskfile import DiskFile
 
         class FakeFile(DiskFile):
 

@@ -157,9 +157,10 @@ class TestObjectReplicator(unittest.TestCase):
         self.conf = dict(
             swift_dir=self.testdir, devices=self.devices, mount_check='false',
             timeout='300', stats_interval='1')
-        self.replicator = object_replicator.ObjectReplicator(
-            self.conf)
+        self.replicator = object_replicator.ObjectReplicator(self.conf)
         self.replicator.logger = FakeLogger()
+        self.df_mgr = diskfile.DiskFileManager(self.conf,
+                                               self.replicator.logger)
 
     def tearDown(self):
         rmtree(self.testdir, ignore_errors=1)
@@ -171,8 +172,7 @@ class TestObjectReplicator(unittest.TestCase):
         was_connector = object_replicator.http_connect
         object_replicator.http_connect = mock_http_connect(200)
         cur_part = '0'
-        df = diskfile.DiskFile(self.devices, 'sda', cur_part, 'a', 'c', 'o',
-                               FakeLogger())
+        df = self.df_mgr.get_diskfile('sda', cur_part, 'a', 'c', 'o')
         mkdirs(df.datadir)
         f = open(os.path.join(df.datadir,
                               normalize_timestamp(time.time()) + '.data'),
@@ -298,8 +298,7 @@ class TestObjectReplicator(unittest.TestCase):
     def test_delete_partition(self):
         with mock.patch('swift.obj.replicator.http_connect',
                         mock_http_connect(200)):
-            df = diskfile.DiskFile(self.devices,
-                                   'sda', '1', 'a', 'c', 'o', FakeLogger())
+            df = self.df_mgr.get_diskfile('sda', '1', 'a', 'c', 'o')
             mkdirs(df.datadir)
             print df.datadir
             f = open(os.path.join(df.datadir,
@@ -327,8 +326,7 @@ class TestObjectReplicator(unittest.TestCase):
     def test_delete_partition_with_failures(self):
         with mock.patch('swift.obj.replicator.http_connect',
                         mock_http_connect(200)):
-            df = diskfile.DiskFile(self.devices,
-                                   'sda', '1', 'a', 'c', 'o', FakeLogger())
+            df = self.df_mgr.get_diskfile('sda', '1', 'a', 'c', 'o')
             mkdirs(df.datadir)
             print df.datadir
             f = open(os.path.join(df.datadir,
@@ -363,8 +361,7 @@ class TestObjectReplicator(unittest.TestCase):
         with mock.patch('swift.obj.replicator.http_connect',
                         mock_http_connect(200)):
             self.replicator.handoff_delete = 2
-            df = diskfile.DiskFile(self.devices,
-                                   'sda', '1', 'a', 'c', 'o', FakeLogger())
+            df = self.df_mgr.get_diskfile('sda', '1', 'a', 'c', 'o')
             mkdirs(df.datadir)
             print df.datadir
             f = open(os.path.join(df.datadir,
@@ -398,8 +395,7 @@ class TestObjectReplicator(unittest.TestCase):
         with mock.patch('swift.obj.replicator.http_connect',
                         mock_http_connect(200)):
             self.replicator.handoff_delete = 2
-            df = diskfile.DiskFile(self.devices,
-                                   'sda', '1', 'a', 'c', 'o', FakeLogger())
+            df = self.df_mgr.get_diskfile('sda', '1', 'a', 'c', 'o')
             mkdirs(df.datadir)
             print df.datadir
             f = open(os.path.join(df.datadir,
@@ -431,8 +427,7 @@ class TestObjectReplicator(unittest.TestCase):
             self.assertTrue(os.access(part_path, os.F_OK))
 
     def test_delete_partition_override_params(self):
-        df = diskfile.DiskFile(self.devices, 'sda', '0', 'a', 'c', 'o',
-                               FakeLogger())
+        df = self.df_mgr.get_diskfile('sda', '0', 'a', 'c', 'o')
         mkdirs(df.datadir)
         part_path = os.path.join(self.objects, '1')
         self.assertTrue(os.access(part_path, os.F_OK))
@@ -454,8 +449,7 @@ class TestObjectReplicator(unittest.TestCase):
             # Write some files into '1' and run replicate- they should be moved
             # to the other partitoins and then node should get deleted.
             cur_part = '1'
-            df = diskfile.DiskFile(
-                self.devices, 'sda', cur_part, 'a', 'c', 'o', FakeLogger())
+            df = self.df_mgr.get_diskfile('sda', cur_part, 'a', 'c', 'o')
             mkdirs(df.datadir)
             f = open(os.path.join(df.datadir,
                                   normalize_timestamp(time.time()) + '.data'),
@@ -518,8 +512,7 @@ class TestObjectReplicator(unittest.TestCase):
             # Write some files into '1' and run replicate- they should be moved
             # to the other partitions and then node should get deleted.
             cur_part = '1'
-            df = diskfile.DiskFile(
-                self.devices, 'sda', cur_part, 'a', 'c', 'o', FakeLogger())
+            df = self.df_mgr.get_diskfile('sda', cur_part, 'a', 'c', 'o')
             mkdirs(df.datadir)
             f = open(os.path.join(df.datadir,
                                   normalize_timestamp(time.time()) + '.data'),
