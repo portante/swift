@@ -56,6 +56,7 @@ class TestObjectController(unittest.TestCase):
         self.object_controller.bytes_per_sync = 1
         self._orig_tpool_exc = tpool.execute
         tpool.execute = lambda f, *args, **kwargs: f(*args, **kwargs)
+        self.df_mgr = diskfile.DiskFileManager(conf, FakeLogger())
 
     def tearDown(self):
         """Tear down for testing swift.object.server.ObjectController"""
@@ -361,8 +362,7 @@ class TestObjectController(unittest.TestCase):
         req.body = 'VERIFY'
         resp = req.get_response(self.object_controller)
         self.assertEquals(resp.status_int, 201)
-        objfile = diskfile.DiskFile(self.testdir, 'sda1', 'p', 'a', 'c', 'o',
-                                    FakeLogger())
+        objfile = self.df_mgr.get_diskfile('sda1', 'p', 'a', 'c', 'o')
         objfile.open()
 
         file_name = os.path.basename(objfile.data_file)
@@ -447,7 +447,7 @@ class TestObjectController(unittest.TestCase):
         self.assertEquals(resp.status_int, 201)
         objfile = os.path.join(
             self.testdir, 'sda1',
-            storage_directory(object_server.DATADIR, 'p',
+            storage_directory(diskfile.DATADIR, 'p',
                               hash_path('a', 'c', 'o')),
             timestamp + '.data')
         self.assert_(os.path.isfile(objfile))
@@ -480,7 +480,7 @@ class TestObjectController(unittest.TestCase):
         self.assertEquals(resp.status_int, 201)
         objfile = os.path.join(
             self.testdir, 'sda1',
-            storage_directory(object_server.DATADIR, 'p',
+            storage_directory(diskfile.DATADIR, 'p',
                               hash_path('a', 'c', 'o')),
             timestamp + '.data')
         self.assert_(os.path.isfile(objfile))
@@ -554,7 +554,7 @@ class TestObjectController(unittest.TestCase):
         self.assertEquals(resp.status_int, 201)
         objfile = os.path.join(
             self.testdir, 'sda1',
-            storage_directory(object_server.DATADIR, 'p',
+            storage_directory(diskfile.DATADIR, 'p',
                               hash_path('a', 'c', 'o')),
             timestamp + '.data')
         self.assert_(os.path.isfile(objfile))
@@ -677,7 +677,7 @@ class TestObjectController(unittest.TestCase):
 
         objfile = os.path.join(
             self.testdir, 'sda1',
-            storage_directory(object_server.DATADIR, 'p',
+            storage_directory(diskfile.DATADIR, 'p',
                               hash_path('a', 'c', 'o')),
             timestamp + '.data')
         os.unlink(objfile)
@@ -719,8 +719,7 @@ class TestObjectController(unittest.TestCase):
         req.body = 'VERIFY'
         resp = req.get_response(self.object_controller)
         self.assertEquals(resp.status_int, 201)
-        objfile = diskfile.DiskFile(self.testdir, 'sda1', 'p', 'a', 'c', 'o',
-                                    FakeLogger())
+        objfile = self.df_mgr.get_diskfile('sda1', 'p', 'a', 'c', 'o')
         objfile.open()
 
         file_name = os.path.basename(objfile.data_file)
@@ -800,7 +799,7 @@ class TestObjectController(unittest.TestCase):
 
         objfile = os.path.join(
             self.testdir, 'sda1',
-            storage_directory(object_server.DATADIR, 'p',
+            storage_directory(diskfile.DATADIR, 'p',
                               hash_path('a', 'c', 'o')),
             timestamp + '.data')
         os.unlink(objfile)
@@ -1018,8 +1017,7 @@ class TestObjectController(unittest.TestCase):
         req.body = 'VERIFY'
         resp = req.get_response(self.object_controller)
         self.assertEquals(resp.status_int, 201)
-        objfile = diskfile.DiskFile(self.testdir, 'sda1', 'p', 'a', 'c', 'o',
-                                    FakeLogger())
+        objfile = self.df_mgr.get_diskfile('sda1', 'p', 'a', 'c', 'o')
         objfile.open()
         file_name = os.path.basename(objfile.data_file)
         etag = md5()
@@ -1051,8 +1049,7 @@ class TestObjectController(unittest.TestCase):
         req.body = 'VERIFY'
         resp = req.get_response(self.object_controller)
         self.assertEquals(resp.status_int, 201)
-        objfile = diskfile.DiskFile(self.testdir, 'sda1', 'p', 'a', 'c', 'o',
-                                    FakeLogger())
+        objfile = self.df_mgr.get_diskfile('sda1', 'p', 'a', 'c', 'o')
         objfile.open()
         file_name = os.path.basename(objfile.data_file)
         with open(objfile.data_file) as fp:
@@ -1080,8 +1077,7 @@ class TestObjectController(unittest.TestCase):
         req.body = 'VERIFY'
         resp = req.get_response(self.object_controller)
         self.assertEquals(resp.status_int, 201)
-        objfile = diskfile.DiskFile(self.testdir, 'sda1', 'p', 'a', 'c', 'o',
-                                    FakeLogger())
+        objfile = self.df_mgr.get_diskfile('sda1', 'p', 'a', 'c', 'o')
         objfile.open()
         file_name = os.path.basename(objfile.data_file)
         etag = md5()
@@ -1150,7 +1146,7 @@ class TestObjectController(unittest.TestCase):
         self.assertEquals(resp.status_int, 404)
         objfile = os.path.join(
             self.testdir, 'sda1',
-            storage_directory(object_server.DATADIR, 'p',
+            storage_directory(diskfile.DATADIR, 'p',
                               hash_path('a', 'c', 'o')),
             timestamp + '.ts')
         self.assert_(os.path.isfile(objfile))
@@ -1164,7 +1160,7 @@ class TestObjectController(unittest.TestCase):
         self.assertEquals(resp.status_int, 404)
         objfile = os.path.join(
             self.testdir, 'sda1',
-            storage_directory(object_server.DATADIR, 'p',
+            storage_directory(diskfile.DATADIR, 'p',
                               hash_path('a', 'c', 'o')),
             timestamp + '.ts')
         self.assertFalse(os.path.isfile(objfile))
@@ -1191,7 +1187,7 @@ class TestObjectController(unittest.TestCase):
         self.assertEquals(resp.status_int, 409)
         objfile = os.path.join(
             self.testdir, 'sda1',
-            storage_directory(object_server.DATADIR, 'p',
+            storage_directory(diskfile.DATADIR, 'p',
                               hash_path('a', 'c', 'o')),
             timestamp + '.ts')
         self.assertFalse(os.path.isfile(objfile))
@@ -1206,7 +1202,7 @@ class TestObjectController(unittest.TestCase):
         self.assertEquals(resp.status_int, 204)
         objfile = os.path.join(
             self.testdir, 'sda1',
-            storage_directory(object_server.DATADIR, 'p',
+            storage_directory(diskfile.DATADIR, 'p',
                               hash_path('a', 'c', 'o')),
             timestamp + '.ts')
         self.assert_(os.path.isfile(objfile))
@@ -1244,7 +1240,7 @@ class TestObjectController(unittest.TestCase):
             self.assertEquals(resp.status_int, 409)
             objfile = os.path.join(
                 self.testdir, 'sda1',
-                storage_directory(object_server.DATADIR, 'p',
+                storage_directory(diskfile.DATADIR, 'p',
                                   hash_path('a', 'c', 'o')),
                 timestamp + '.ts')
             self.assertFalse(os.path.isfile(objfile))
@@ -1264,7 +1260,7 @@ class TestObjectController(unittest.TestCase):
             self.assertEquals(resp.status_int, 204)
             objfile = os.path.join(
                 self.testdir, 'sda1',
-                storage_directory(object_server.DATADIR, 'p',
+                storage_directory(diskfile.DATADIR, 'p',
                                   hash_path('a', 'c', 'o')),
                 timestamp + '.ts')
             self.assert_(os.path.isfile(objfile))
@@ -1284,7 +1280,7 @@ class TestObjectController(unittest.TestCase):
             self.assertEquals(resp.status_int, 404)
             objfile = os.path.join(
                 self.testdir, 'sda1',
-                storage_directory(object_server.DATADIR, 'p',
+                storage_directory(diskfile.DATADIR, 'p',
                                   hash_path('a', 'c', 'o')),
                 timestamp + '.ts')
             self.assert_(os.path.isfile(objfile))
@@ -1303,7 +1299,7 @@ class TestObjectController(unittest.TestCase):
             self.assertEquals(resp.status_int, 404)
             objfile = os.path.join(
                 self.testdir, 'sda1',
-                storage_directory(object_server.DATADIR, 'p',
+                storage_directory(diskfile.DATADIR, 'p',
                                   hash_path('a', 'c', 'o')),
                 timestamp + '.ts')
             self.assertFalse(os.path.isfile(objfile))
@@ -1658,7 +1654,7 @@ class TestObjectController(unittest.TestCase):
         self.assertEquals(resp.status_int, 201)
         objfile = os.path.join(
             self.testdir, 'sda1',
-            storage_directory(object_server.DATADIR, 'p',
+            storage_directory(diskfile.DATADIR, 'p',
                               hash_path('a', 'c', 'o')),
             timestamp + '.data')
         self.assert_(os.path.isfile(objfile))
@@ -1687,7 +1683,7 @@ class TestObjectController(unittest.TestCase):
         resp = req.get_response(self.object_controller)
         objfile = os.path.join(
             self.testdir, 'sda1',
-            storage_directory(object_server.DATADIR, 'p',
+            storage_directory(diskfile.DATADIR, 'p',
                               hash_path('a', 'c', 'o')),
             timestamp + '.data')
         self.assert_(os.path.isfile(objfile))
@@ -2709,8 +2705,8 @@ class TestObjectController(unittest.TestCase):
         def my_tpool_execute(func, *args, **kwargs):
             return func(*args, **kwargs)
 
-        was_get_hashes = object_server.get_hashes
-        object_server.get_hashes = fake_get_hashes
+        was_get_hashes = diskfile.get_hashes
+        diskfile.get_hashes = fake_get_hashes
         was_tpool_exe = tpool.execute
         tpool.execute = my_tpool_execute
         try:
@@ -2724,7 +2720,7 @@ class TestObjectController(unittest.TestCase):
             self.assertEquals(p_data, {1: 2})
         finally:
             tpool.execute = was_tpool_exe
-            object_server.get_hashes = was_get_hashes
+            diskfile.get_hashes = was_get_hashes
 
     def test_REPLICATE_timeout(self):
 
@@ -2734,8 +2730,8 @@ class TestObjectController(unittest.TestCase):
         def my_tpool_execute(func, *args, **kwargs):
             return func(*args, **kwargs)
 
-        was_get_hashes = object_server.get_hashes
-        object_server.get_hashes = fake_get_hashes
+        was_get_hashes = diskfile.get_hashes
+        diskfile.get_hashes = fake_get_hashes
         was_tpool_exe = tpool.execute
         tpool.execute = my_tpool_execute
         try:
@@ -2746,7 +2742,7 @@ class TestObjectController(unittest.TestCase):
             self.assertRaises(Timeout, self.object_controller.REPLICATE, req)
         finally:
             tpool.execute = was_tpool_exe
-            object_server.get_hashes = was_get_hashes
+            diskfile.get_hashes = was_get_hashes
 
     def test_PUT_with_full_drive(self):
 

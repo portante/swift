@@ -21,10 +21,13 @@ import errno
 
 from hashlib import md5
 from random import shuffle
+from collections import defaultdict
 from ConfigParser import ConfigParser, NoSectionError, NoOptionError
 
 from swift import gettext_ as _
-from swift.common.utils import listdir, quote
+from swift.common.utils import listdir, quote, config_true_value, ThreadPool
+from swift.common.constraints import check_mount
+
 
 # Used by hash_path to offer a bit more security when generating hashes for
 # paths. It simply appends this value to all paths; guessing the hash a path
@@ -126,59 +129,92 @@ def storage_directory(datadir, partition, name_hash):
     return os.path.join(datadir, str(partition), name_hash[-3:], name_hash)
 
 
-def audit_location_generator(devices, datadir, suffix='',
-                             mount_check=True, logger=None):
-    '''
-    Given a devices path and a data directory, yield (path, device,
-    partition) for all files in that directory
+class Devices(object):
+    """
+    Internal-to-Implementation on-disk device mount point management.
 
-    :param devices: parent directory of the devices to be audited
-    :param datadir: a directory located under self.devices. This should be
-                    one of the DATADIR constants defined in the account,
-                    container, and object servers.
-    :param suffix: path name suffix required for all names returned
-    :param mount_check: Flag to check if a mount check should be performed
-                    on devices
-    :param logger: a logger object
-    '''
-    device_dir = listdir(devices)
-    # randomize devices in case of process restart before sweep completed
-    shuffle(device_dir)
-    for device in device_dir:
-        if mount_check and not \
-                os.path.ismount(os.path.join(devices, device)):
-            if logger:
-                logger.debug(
-                    _('Skipping %s as it is not mounted'), device)
-            continue
-        datadir_path = os.path.join(devices, device, datadir)
-        partitions = listdir(datadir_path)
-        for partition in partitions:
-            part_path = os.path.join(datadir_path, partition)
-            try:
-                suffixes = listdir(part_path)
-            except OSError as e:
-                if e.errno != errno.ENOTDIR:
-                    raise
+    :param conf: configuration object from which to fetch values
+    """
+    def __init__(self, conf):
+        self.devices = conf.get('devices', '/srv/node/')
+        self.mount_check = config_true_value(conf.get('mount_check', 'true'))
+        threads_per_disk = int(conf.get('threads_per_disk', '0'))
+        self.threadpools = defaultdict(
+            lambda: ThreadPool(nthreads=threads_per_disk))
+
+    def construct_dev_path(self, device):
+        """
+        Construct the path to a device without checking if it is mounted.
+
+        :param device: name of target device
+        :returns: full path to the device
+        """
+        return os.path.join(self.devices, device)
+
+    def get_dev_path(self, device):
+        """
+        Return the path to a device, checking to see that it is a proper mount
+        point based on a configuration parameter.
+
+        :param device: name of target device
+        :returns: full path to the device, None if the path to the device is
+                  not a proper mount point.
+        """
+        if self.mount_check and not check_mount(self.devices, device):
+            dev_path = None
+        else:
+            dev_path = os.path.join(self.devices, device)
+        return dev_path
+
+    def audit_location_generator(self, datadir, suffix='', logger=None):
+        '''
+        Given a data directory, yield (path, device, partition) for all files
+        in that directory
+
+        :param datadir: a directory located under self.devices. This should be
+                        one of the DATADIR constants defined in the account,
+                        container, and object servers.
+        :param suffix: path name suffix required for all names returned
+        :param logger: a logger object
+        '''
+        device_dir = listdir(self.devices)
+        # randomize devices in case of process restart before sweep completed
+        shuffle(device_dir)
+        for device in device_dir:
+            dev_path = os.path.join(self.devices, device)
+            if self.mount_check and not os.path.ismount(dev_path):
+                if logger:
+                    logger.debug(
+                        _('Skipping %s as it is not mounted'), device)
                 continue
-            for asuffix in suffixes:
-                suff_path = os.path.join(part_path, asuffix)
+            datadir_path = os.path.join(dev_path, datadir)
+            partitions = listdir(datadir_path)
+            for partition in partitions:
+                part_path = os.path.join(datadir_path, partition)
                 try:
-                    hashes = listdir(suff_path)
+                    suffixes = listdir(part_path)
                 except OSError as e:
                     if e.errno != errno.ENOTDIR:
                         raise
                     continue
-                for hsh in hashes:
-                    hash_path = os.path.join(suff_path, hsh)
+                for asuffix in suffixes:
+                    suff_path = os.path.join(part_path, asuffix)
                     try:
-                        files = sorted(listdir(hash_path), reverse=True)
+                        hashes = listdir(suff_path)
                     except OSError as e:
                         if e.errno != errno.ENOTDIR:
                             raise
                         continue
-                    for fname in files:
-                        if suffix and not fname.endswith(suffix):
+                    for hsh in hashes:
+                        hash_path = os.path.join(suff_path, hsh)
+                        try:
+                            files = sorted(listdir(hash_path), reverse=True)
+                        except OSError as e:
+                            if e.errno != errno.ENOTDIR:
+                                raise
                             continue
-                        path = os.path.join(hash_path, fname)
-                        yield path, device, partition
+                        for fname in files:
+                            if suffix and not fname.endswith(suffix):
+                                continue
+                            path = os.path.join(hash_path, fname)
+                            yield path, device, partition

@@ -20,18 +20,16 @@ import cPickle as pickle
 import os
 import time
 import traceback
-from collections import defaultdict
 from datetime import datetime
 from swift import gettext_ as _
 from hashlib import md5
 
 from eventlet import sleep, Timeout
 
-from swift.common.utils import mkdirs, public, get_logger, write_pickle, \
-    config_true_value, timing_stats, ThreadPool, replication
-from swift.common.ondisk import normalize_timestamp, hash_path
+from swift.common.utils import public, get_logger, \
+    config_true_value, timing_stats, replication
 from swift.common.bufferedhttp import http_connect
-from swift.common.constraints import check_object_creation, check_mount, \
+from swift.common.constraints import check_object_creation, \
     check_float, check_utf8
 from swift.common.exceptions import ConnectionTimeout, DiskFileError, \
     DiskFileNotExist, DiskFileCollision, DiskFileNoSpace, \
@@ -44,13 +42,7 @@ from swift.common.swob import HTTPAccepted, HTTPBadRequest, HTTPCreated, \
     HTTPClientDisconnect, HTTPMethodNotAllowed, Request, Response, UTC, \
     HTTPInsufficientStorage, HTTPForbidden, HTTPException, HeaderKeyDict, \
     HTTPConflict
-from swift.obj.diskfile import DATAFILE_SYSTEM_META, DiskFile, \
-    get_hashes
-
-
-DATADIR = 'objects'
-ASYNCDIR = 'async_pending'
-MAX_OBJECT_NAME_LENGTH = 1024
+from swift.obj.diskfile import DATAFILE_SYSTEM_META, DiskFileManager
 
 
 class ObjectController(object):
@@ -64,26 +56,19 @@ class ObjectController(object):
         /etc/swift/object-server.conf-sample.
         """
         self.logger = get_logger(conf, log_route='object-server')
-        self.devices = conf.get('devices', '/srv/node/')
-        self.mount_check = config_true_value(conf.get('mount_check', 'true'))
         self.node_timeout = int(conf.get('node_timeout', 3))
         self.conn_timeout = float(conf.get('conn_timeout', 0.5))
-        self.disk_chunk_size = int(conf.get('disk_chunk_size', 65536))
         self.network_chunk_size = int(conf.get('network_chunk_size', 65536))
-        self.keep_cache_size = int(conf.get('keep_cache_size', 5242880))
-        self.keep_cache_private = \
-            config_true_value(conf.get('keep_cache_private', 'false'))
         self.log_requests = config_true_value(conf.get('log_requests', 'true'))
         self.max_upload_time = int(conf.get('max_upload_time', 86400))
         self.slow = int(conf.get('slow', 0))
-        self.bytes_per_sync = int(conf.get('mb_per_sync', 512)) * 1024 * 1024
+        self.keep_cache_private = \
+            config_true_value(conf.get('keep_cache_private', 'false'))
         replication_server = conf.get('replication_server', None)
         if replication_server is not None:
             replication_server = config_true_value(replication_server)
         self.replication_server = replication_server
-        self.threads_per_disk = int(conf.get('threads_per_disk', '0'))
-        self.threadpools = defaultdict(
-            lambda: ThreadPool(nthreads=self.threads_per_disk))
+
         default_allowed_headers = '''
             content-disposition,
             content-encoding,
@@ -106,15 +91,34 @@ class ObjectController(object):
         self.expiring_objects_container_divisor = \
             int(conf.get('expiring_objects_container_divisor') or 86400)
 
-    def _diskfile(self, device, partition, account, container, obj, **kwargs):
-        """Utility method for instantiating a DiskFile."""
-        kwargs.setdefault('mount_check', self.mount_check)
-        kwargs.setdefault('bytes_per_sync', self.bytes_per_sync)
-        kwargs.setdefault('disk_chunk_size', self.disk_chunk_size)
-        kwargs.setdefault('threadpool', self.threadpools[device])
-        kwargs.setdefault('obj_dir', DATADIR)
-        return DiskFile(self.devices, device, partition, account,
-                        container, obj, self.logger, **kwargs)
+        # Provide further setup sepecific to an object server implemenation.
+        self.setup(conf)
+
+    def setup(self, conf):
+        """
+        Implementation specific setup. This method is called at the very end
+        by the constructor to allow a specific implementation to modify
+        existing attributes or add its own attributes.
+
+        :param conf: WSGI configuration parameter
+        """
+
+        # Common on-disk hierarchy shared across account, container and object
+        # servers.
+        self._diskfile_mgr = DiskFileManager(conf, self.logger)
+
+    def get_diskfile(self, device, partition, account, container, obj,
+                     **kwargs):
+        """
+        Utility method for instantiating a DiskFile object supporting a given
+        REST API.
+
+        An implementation of the object server that wants to use a different
+        DiskFile class would simply over-ride this method to provide that
+        behavior.
+        """
+        return self._diskfile_mgr.get_diskfile(
+            device, partition, account, container, obj, **kwargs)
 
     def async_update(self, op, account, container, obj, host, partition,
                      contdevice, headers_out, objdevice):
@@ -157,16 +161,11 @@ class ObjectController(object):
                     'ERROR container update failed with '
                     '%(ip)s:%(port)s/%(dev)s (saving for async update later)'),
                     {'ip': ip, 'port': port, 'dev': contdevice})
-        async_dir = os.path.join(self.devices, objdevice, ASYNCDIR)
-        ohash = hash_path(account, container, obj)
-        self.logger.increment('async_pendings')
-        self.threadpools[objdevice].run_in_thread(
-            write_pickle,
-            {'op': op, 'account': account, 'container': container,
-             'obj': obj, 'headers': headers_out},
-            os.path.join(async_dir, ohash[-3:], ohash + '-' +
-                         normalize_timestamp(headers_out['x-timestamp'])),
-            os.path.join(self.devices, objdevice, 'tmp'))
+        data = {'op': op, 'account': account, 'container': container,
+                'obj': obj, 'headers': headers_out}
+        timestamp = headers_out['x-timestamp']
+        self._diskfile_mgr.pickle_async_update(objdevice, account, container,
+                                               obj, data, timestamp)
 
     def container_update(self, op, account, container, obj, request,
                          headers_out, objdevice):
@@ -295,8 +294,8 @@ class ObjectController(object):
             return HTTPBadRequest(body='X-Delete-At in past', request=request,
                                   content_type='text/plain')
         try:
-            disk_file = self._diskfile(device, partition, account, container,
-                                       obj)
+            disk_file = self.get_diskfile(
+                device, partition, account, container, obj)
         except DiskFileDeviceUnavailable:
             return HTTPInsufficientStorage(drive=device, request=request)
         with disk_file.open():
@@ -353,8 +352,8 @@ class ObjectController(object):
             return HTTPBadRequest(body=str(e), request=request,
                                   content_type='text/plain')
         try:
-            disk_file = self._diskfile(device, partition, account, container,
-                                       obj)
+            disk_file = self.get_diskfile(
+                device, partition, account, container, obj)
         except DiskFileDeviceUnavailable:
             return HTTPInsufficientStorage(drive=device, request=request)
         with disk_file.open():
@@ -433,9 +432,13 @@ class ObjectController(object):
         """Handle HTTP GET requests for the Swift Object Server."""
         device, partition, account, container, obj = \
             split_and_validate_path(request, 5, 5, True)
+        keep_cache = self.keep_cache_private or (
+            'X-Auth-Token' not in request.headers and
+            'X-Storage-Token' not in request.headers)
         try:
-            disk_file = self._diskfile(device, partition, account, container,
-                                       obj, iter_hook=sleep)
+            disk_file = self.get_diskfile(
+                device, partition, account, container, obj, iter_hook=sleep,
+                keep_cache=keep_cache)
         except DiskFileDeviceUnavailable:
             return HTTPInsufficientStorage(drive=device, request=request)
         disk_file.open()
@@ -493,11 +496,6 @@ class ObjectController(object):
         response.etag = metadata['ETag']
         response.last_modified = float(metadata['X-Timestamp'])
         response.content_length = file_size
-        if response.content_length < self.keep_cache_size and \
-                (self.keep_cache_private or
-                 ('X-Auth-Token' not in request.headers and
-                  'X-Storage-Token' not in request.headers)):
-            disk_file.keep_cache = True
         if 'Content-Encoding' in metadata:
             response.content_encoding = metadata['Content-Encoding']
         response.headers['X-Timestamp'] = metadata['X-Timestamp']
@@ -510,8 +508,8 @@ class ObjectController(object):
         device, partition, account, container, obj = \
             split_and_validate_path(request, 5, 5, True)
         try:
-            disk_file = self._diskfile(device, partition, account, container,
-                                       obj)
+            disk_file = self.get_diskfile(
+                device, partition, account, container, obj)
         except DiskFileDeviceUnavailable:
             return HTTPInsufficientStorage(drive=device, request=request)
         with disk_file.open():
@@ -550,8 +548,8 @@ class ObjectController(object):
             return HTTPBadRequest(body='Missing timestamp', request=request,
                                   content_type='text/plain')
         try:
-            disk_file = self._diskfile(device, partition, account, container,
-                                       obj)
+            disk_file = self.get_diskfile(
+                device, partition, account, container, obj)
         except DiskFileDeviceUnavailable:
             return HTTPInsufficientStorage(drive=device, request=request)
         with disk_file.open():
@@ -596,16 +594,13 @@ class ObjectController(object):
         """
         device, partition, suffix = split_and_validate_path(
             request, 2, 3, True)
-
-        if self.mount_check and not check_mount(self.devices, device):
-            return HTTPInsufficientStorage(drive=device, request=request)
-        path = os.path.join(self.devices, device, DATADIR, partition)
-        if not os.path.exists(path):
-            mkdirs(path)
-        suffixes = suffix.split('-') if suffix else []
-        _junk, hashes = self.threadpools[device].force_run_in_thread(
-            get_hashes, path, recalculate=suffixes)
-        return Response(body=pickle.dumps(hashes))
+        try:
+            hashes = self._diskfile_mgr.get_hashes(device, partition, suffix)
+        except DiskFileDeviceUnavailable:
+            resp = HTTPInsufficientStorage(drive=device, request=request)
+        else:
+            resp = Response(body=pickle.dumps(hashes))
+        return resp
 
     def __call__(self, env, start_response):
         """WSGI Application entry point for the Swift Object Server."""

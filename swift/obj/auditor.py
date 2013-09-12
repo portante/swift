@@ -20,10 +20,9 @@ from swift import gettext_ as _
 from eventlet import Timeout
 
 from swift.obj import diskfile
-from swift.obj import server as object_server
 from swift.common.utils import get_logger, ratelimit_sleep, \
-    config_true_value, dump_recon_cache, list_from_csv, json
-from swift.common.ondisk import audit_location_generator
+    dump_recon_cache, list_from_csv, json
+from swift.common.ondisk import Devices
 from swift.common.exceptions import AuditException, DiskFileError, \
     DiskFileNotExist
 from swift.common.daemon import Daemon
@@ -37,8 +36,8 @@ class AuditorWorker(object):
     def __init__(self, conf, logger, zero_byte_only_at_fps=0):
         self.conf = conf
         self.logger = logger
-        self.devices = conf.get('devices', '/srv/node')
-        self.mount_check = config_true_value(conf.get('mount_check', 'true'))
+        self.devices = Devices(conf)
+        self.diskfile_mgr = diskfile.DiskFileManager(conf, self.logger)
         self.max_files_per_second = float(conf.get('files_per_second', 20))
         self.max_bytes_per_second = float(conf.get('bytes_per_second',
                                                    10000000))
@@ -73,10 +72,8 @@ class AuditorWorker(object):
         total_quarantines = 0
         total_errors = 0
         time_auditing = 0
-        all_locs = audit_location_generator(self.devices,
-                                            object_server.DATADIR, '.data',
-                                            mount_check=self.mount_check,
-                                            logger=self.logger)
+        all_locs = self.devices.audit_location_generator(
+            diskfile.DATADIR, '.data', logger=self.logger)
         for path, device, partition in all_locs:
             loop_time = time.time()
             self.failsafe_object_audit(path, device, partition)
@@ -177,8 +174,8 @@ class AuditorWorker(object):
             except (Exception, Timeout) as exc:
                 raise AuditException('Error when reading metadata: %s' % exc)
             _junk, account, container, obj = name.split('/', 3)
-            df = diskfile.DiskFile(self.devices, device, partition,
-                                   account, container, obj, self.logger)
+            df = self.diskfile_mgr.get_diskfile(
+                device, partition, account, container, obj)
             df.open()
             try:
                 try:
@@ -214,7 +211,7 @@ class AuditorWorker(object):
                                 'be quarantined: %(err)s'),
                               {'obj': path, 'err': err})
             diskfile.quarantine_renamer(
-                os.path.join(self.devices, device), path)
+                self.devices.construct_dev_path(device), path)
             return
         self.passes += 1
 
