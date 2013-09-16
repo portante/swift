@@ -33,6 +33,7 @@ from swift.common.ring import Ring
 from swift.common.utils import get_logger, config_true_value, dump_recon_cache
 from swift.common.daemon import Daemon
 from swift.common.http import is_success, HTTP_INTERNAL_SERVER_ERROR
+from swift.common.ondisk import Devices
 
 
 class ContainerUpdater(Daemon):
@@ -41,8 +42,7 @@ class ContainerUpdater(Daemon):
     def __init__(self, conf):
         self.conf = conf
         self.logger = get_logger(conf, log_route='container-updater')
-        self.devices = conf.get('devices', '/srv/node')
-        self.mount_check = config_true_value(conf.get('mount_check', 'true'))
+        self.devices = Devices(conf)
         self.swift_dir = conf.get('swift_dir', '/etc/swift')
         self.interval = int(conf.get('interval', 300))
         self.account_ring = None
@@ -77,9 +77,9 @@ class ContainerUpdater(Daemon):
         :returns: a list of paths
         """
         paths = []
-        for device in os.listdir(self.devices):
-            dev_path = os.path.join(self.devices, device)
-            if self.mount_check and not os.path.ismount(dev_path):
+        for device in os.listdir(self.devices.devices):
+            dev_path = self.devices.get_dev_path(device)
+            if not dev_path:
                 self.logger.warn(_('%s is not mounted'), device)
                 continue
             con_path = os.path.join(dev_path, DATADIR)

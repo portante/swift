@@ -35,6 +35,7 @@ from swift.common.utils import whataremyips, unlink_older_than, \
 from swift.common.bufferedhttp import http_connect
 from swift.common.daemon import Daemon
 from swift.common.http import HTTP_OK, HTTP_INSUFFICIENT_STORAGE
+from swift.common.ondisk import Devices
 from swift.obj.diskfile import get_hashes
 
 
@@ -57,8 +58,7 @@ class ObjectReplicator(Daemon):
         """
         self.conf = conf
         self.logger = get_logger(conf, log_route='object-replicator')
-        self.devices_dir = conf.get('devices', '/srv/node')
-        self.mount_check = config_true_value(conf.get('mount_check', 'true'))
+        self.devices = Devices(conf)
         self.vm_test_mode = config_true_value(conf.get('vm_test_mode', 'no'))
         self.swift_dir = conf.get('swift_dir', '/etc/swift')
         self.port = int(conf.get('bind_port', 6000))
@@ -387,12 +387,12 @@ class ObjectReplicator(Daemon):
         for local_dev in [dev for dev in self.object_ring.devs
                           if dev and dev['replication_ip'] in ips and
                           dev['replication_port'] == self.port]:
-            dev_path = join(self.devices_dir, local_dev['device'])
-            obj_path = join(dev_path, 'objects')
-            tmp_path = join(dev_path, 'tmp')
-            if self.mount_check and not os.path.ismount(dev_path):
+            dev_path = self.devices.get_dev_path(local_dev['device'])
+            if not dev_path:
                 self.logger.warn(_('%s is not mounted'), local_dev['device'])
                 continue
+            obj_path = join(dev_path, 'objects')
+            tmp_path = join(dev_path, 'tmp')
             unlink_older_than(tmp_path, time.time() - self.reclaim_age)
             if not os.path.exists(obj_path):
                 try:
@@ -457,8 +457,8 @@ class ObjectReplicator(Daemon):
                 if override_partitions and \
                         job['partition'] not in override_partitions:
                     continue
-                dev_path = join(self.devices_dir, job['device'])
-                if self.mount_check and not os.path.ismount(dev_path):
+                dev_path = self.devices.get_dev_path(job['device'])
+                if not dev_path:
                     self.logger.warn(_('%s is not mounted'), job['device'])
                     continue
                 if not self.check_ring():
