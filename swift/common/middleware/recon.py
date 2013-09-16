@@ -19,7 +19,7 @@ from swift import gettext_ as _
 
 from swift import __version__ as swiftver
 from swift.common.swob import Request, Response
-from swift.common.utils import get_logger, config_true_value, json
+from swift.common.utils import get_logger, json
 from swift.common.constraints import check_mount
 from resource import getpagesize
 from hashlib import md5
@@ -57,7 +57,6 @@ class ReconMiddleware(object):
         self.object_ring_path = os.path.join(swift_dir, 'object.ring.gz')
         self.rings = [self.account_ring_path, self.container_ring_path,
                       self.object_ring_path]
-        self.mount_check = config_true_value(conf.get('mount_check', 'true'))
 
     def _from_recon_cache(self, cache_keys, cache_file, openr=open):
         """retrieve values from a recon cache file

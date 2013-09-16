@@ -27,11 +27,12 @@ from swift.common.bufferedhttp import http_connect
 from swift.common.exceptions import ConnectionTimeout
 from swift.common.ring import Ring
 from swift.common.utils import get_logger, renamer, write_pickle, \
-    dump_recon_cache, config_true_value
+    dump_recon_cache
 from swift.common.daemon import Daemon
 from swift.obj.diskfile import ASYNCDIR
 from swift.common.http import is_success, HTTP_NOT_FOUND, \
     HTTP_INTERNAL_SERVER_ERROR
+from swift.common.ondisk import Devices
 
 
 class ObjectUpdater(Daemon):
@@ -40,8 +41,7 @@ class ObjectUpdater(Daemon):
     def __init__(self, conf):
         self.conf = conf
         self.logger = get_logger(conf, log_route='object-updater')
-        self.devices = conf.get('devices', '/srv/node')
-        self.mount_check = config_true_value(conf.get('mount_check', 'true'))
+        self.devices = Devices(conf)
         self.swift_dir = conf.get('swift_dir', '/etc/swift')
         self.interval = int(conf.get('interval', 300))
         self.container_ring = None
@@ -70,9 +70,9 @@ class ObjectUpdater(Daemon):
             pids = []
             # read from container ring to ensure it's fresh
             self.get_container_ring().get_nodes('')
-            for device in os.listdir(self.devices):
-                if self.mount_check and not \
-                        os.path.ismount(os.path.join(self.devices, device)):
+            for device in os.listdir(self.devices.devices):
+                dev_path = self.devices.get_dev_path(device)
+                if not dev_path:
                     self.logger.increment('errors')
                     self.logger.warn(
                         _('Skipping %s as it is not mounted'), device)
@@ -88,7 +88,7 @@ class ObjectUpdater(Daemon):
                     self.successes = 0
                     self.failures = 0
                     forkbegin = time.time()
-                    self.object_sweep(os.path.join(self.devices, device))
+                    self.object_sweep(dev_path)
                     elapsed = time.time() - forkbegin
                     self.logger.info(
                         _('Object update sweep of %(device)s'
@@ -113,14 +113,14 @@ class ObjectUpdater(Daemon):
         begin = time.time()
         self.successes = 0
         self.failures = 0
-        for device in os.listdir(self.devices):
-            if self.mount_check and \
-                    not os.path.ismount(os.path.join(self.devices, device)):
+        for device in os.listdir(self.devices.devices):
+            dev_path = self.devices.get_dev_path(device)
+            if not dev_path:
                 self.logger.increment('errors')
                 self.logger.warn(
                     _('Skipping %s as it is not mounted'), device)
                 continue
-            self.object_sweep(os.path.join(self.devices, device))
+            self.object_sweep(dev_path)
         elapsed = time.time() - begin
         self.logger.info(
             _('Object update single threaded sweep completed: '

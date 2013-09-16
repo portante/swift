@@ -33,7 +33,7 @@ from swift.common.direct_client import quote
 from swift.common.utils import get_logger, whataremyips, renamer, mkdirs, \
     lock_parent_directory, config_true_value, unlink_older_than, \
     dump_recon_cache, rsync_ip
-from swift.common.ondisk import storage_directory
+from swift.common.ondisk import storage_directory, Devices
 from swift.common import ring
 from swift.common.http import HTTP_NOT_FOUND, HTTP_INSUFFICIENT_STORAGE
 from swift.common.bufferedhttp import BufferedHTTPConnection
@@ -151,8 +151,7 @@ class Replicator(Daemon):
     def __init__(self, conf):
         self.conf = conf
         self.logger = get_logger(conf, log_route='replicator')
-        self.root = conf.get('devices', '/srv/node')
-        self.mount_check = config_true_value(conf.get('mount_check', 'true'))
+        self.devices = Devices(conf)
         self.port = int(conf.get('bind_port', self.default_port))
         concurrency = int(conf.get('concurrency', 8))
         self.cpool = GreenPool(size=concurrency)
@@ -175,7 +174,7 @@ class Replicator(Daemon):
         self.rcache = os.path.join(self.recon_cache_path,
                                    self.recon_replicator)
         self.extract_device_re = re.compile('%s%s([^%s]+)' % (
-            self.root, os.path.sep, os.path.sep))
+            self.devices.devices, os.path.sep, os.path.sep))
 
     def _zero_stats(self):
         """Zero out the stats."""
@@ -530,15 +529,15 @@ class Replicator(Daemon):
         for node in self.ring.devs:
             if (node and node['replication_ip'] in ips and
                     node['replication_port'] == self.port):
-                if self.mount_check and not os.path.ismount(
-                        os.path.join(self.root, node['device'])):
+                dev_path = self.devices.get_dev_path(node['device'])
+                if not dev_path:
                     self.logger.warn(
                         _('Skipping %(device)s as it is not mounted') % node)
                     continue
                 unlink_older_than(
-                    os.path.join(self.root, node['device'], 'tmp'),
+                    os.path.join(dev_path, 'tmp'),
                     time.time() - self.reclaim_age)
-                datadir = os.path.join(self.root, node['device'], self.datadir)
+                datadir = os.path.join(dev_path, self.datadir)
                 if os.path.isdir(datadir):
                     dirs.append((datadir, node['id']))
         self.logger.info(_('Beginning replication run'))
@@ -568,12 +567,10 @@ class Replicator(Daemon):
 class ReplicatorRpc(object):
     """Handle Replication RPC calls.  TODO(redbo): document please :)"""
 
-    def __init__(self, root, datadir, broker_class, mount_check=True,
-                 logger=None):
-        self.root = root
+    def __init__(self, devices, datadir, broker_class, logger=None):
+        self.devices = devices
         self.datadir = datadir
         self.broker_class = broker_class
-        self.mount_check = mount_check
         self.logger = logger or get_logger({}, log_route='replicator-rpc')
 
     def dispatch(self, replicate_args, args):
@@ -581,10 +578,10 @@ class ReplicatorRpc(object):
             return HTTPBadRequest(body='Invalid object type')
         op = args.pop(0)
         drive, partition, hsh = replicate_args
-        if self.mount_check and \
-                not os.path.ismount(os.path.join(self.root, drive)):
+        dev_path = self.devices.get_dev_path(drive)
+        if not dev_path:
             return Response(status='507 %s is not mounted' % drive)
-        db_file = os.path.join(self.root, drive,
+        db_file = os.path.join(dev_path,
                                storage_directory(self.datadir, partition, hsh),
                                hsh + '.db')
         if op == 'rsync_then_merge':
@@ -594,7 +591,7 @@ class ReplicatorRpc(object):
         else:
             # someone might be about to rsync a db to us,
             # make sure there's a tmp dir to receive it.
-            mkdirs(os.path.join(self.root, drive, 'tmp'))
+            mkdirs(os.path.join(dev_path, 'tmp'))
             if not os.path.exists(db_file):
                 return HTTPNotFound()
             return getattr(self, op)(self.broker_class(db_file), args)
@@ -658,7 +655,8 @@ class ReplicatorRpc(object):
         return HTTPAccepted()
 
     def complete_rsync(self, drive, db_file, args):
-        old_filename = os.path.join(self.root, drive, 'tmp', args[0])
+        old_filename = os.path.join(self.devices.construct_dev_path(drive),
+                                    'tmp', args[0])
         if os.path.exists(db_file):
             return HTTPNotFound()
         if not os.path.exists(old_filename):
@@ -669,7 +667,8 @@ class ReplicatorRpc(object):
         return HTTPNoContent()
 
     def rsync_then_merge(self, drive, db_file, args):
-        old_filename = os.path.join(self.root, drive, 'tmp', args[0])
+        old_filename = os.path.join(self.devices.construct_dev_path(drive),
+                                    'tmp', args[0])
         if not os.path.exists(db_file) or not os.path.exists(old_filename):
             return HTTPNotFound()
         new_broker = self.broker_class(old_filename)

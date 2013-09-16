@@ -30,6 +30,7 @@ from swift.common.direct_client import ClientException, \
 from swift.common.ring import Ring
 from swift.common.utils import get_logger, whataremyips, config_true_value
 from swift.common.daemon import Daemon
+from swift.common.ondisk import Devices
 
 
 class AccountReaper(Daemon):
@@ -56,8 +57,7 @@ class AccountReaper(Daemon):
     def __init__(self, conf):
         self.conf = conf
         self.logger = get_logger(conf, log_route='account-reaper')
-        self.devices = conf.get('devices', '/srv/node')
-        self.mount_check = config_true_value(conf.get('mount_check', 'true'))
+        self.devices = Devices(conf)
         self.interval = int(conf.get('interval', 3600))
         self.swift_dir = conf.get('swift_dir', '/etc/swift')
         self.account_ring = None
@@ -116,24 +116,24 @@ class AccountReaper(Daemon):
         repeatedly by :func:`run_forever`. This will call :func:`reap_device`
         once for each device on the server.
         """
-        self.logger.debug(_('Begin devices pass: %s'), self.devices)
+        self.logger.debug(_('Begin devices pass: %s'), self.devices.devices)
         begin = time()
         try:
-            for device in os.listdir(self.devices):
-                if self.mount_check and not os.path.ismount(
-                        os.path.join(self.devices, device)):
+            for device in os.listdir(self.devices.devices):
+                device_path = self.devices.get_dev_path(device)
+                if not device_path:
                     self.logger.increment('errors')
                     self.logger.debug(
                         _('Skipping %s as it is not mounted'), device)
                     continue
-                self.reap_device(device)
+                self.reap_device(device_path)
         except (Exception, Timeout):
             self.logger.exception(_("Exception in top-level account reaper "
                                     "loop"))
         elapsed = time() - begin
         self.logger.info(_('Devices pass completed: %.02fs'), elapsed)
 
-    def reap_device(self, device):
+    def reap_device(self, device_path):
         """
         Called once per pass for each device on the server. This will scan the
         accounts directory for the device, looking for partitions this device
@@ -146,7 +146,7 @@ class AccountReaper(Daemon):
 
         :param device: The device to look for accounts to be deleted.
         """
-        datadir = os.path.join(self.devices, device, DATADIR)
+        datadir = os.path.join(device_path, DATADIR)
         if not os.path.exists(datadir):
             return
         for partition in os.listdir(datadir):

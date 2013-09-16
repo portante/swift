@@ -32,10 +32,10 @@ from swift.common.request_helpers import get_param, get_listing_content_type, \
 from swift.common.utils import get_logger, public, validate_sync_to, \
     config_true_value, json, timing_stats, replication, \
     override_bytes_from_content_type
-from swift.common.ondisk import hash_path, normalize_timestamp, \
+from swift.common.ondisk import hash_path, normalize_timestamp, Devices, \
     storage_directory
-from swift.common.constraints import CONTAINER_LISTING_LIMIT, \
-    check_mount, check_float, check_utf8
+from swift.common.constraints import CONTAINER_LISTING_LIMIT, check_float, \
+    check_utf8
 from swift.common.bufferedhttp import http_connect
 from swift.common.exceptions import ConnectionTimeout
 from swift.common.db_replicator import ReplicatorRpc
@@ -57,8 +57,7 @@ class ContainerController(object):
 
     def __init__(self, conf):
         self.logger = get_logger(conf, log_route='container-server')
-        self.root = conf.get('devices', '/srv/node/')
-        self.mount_check = config_true_value(conf.get('mount_check', 'true'))
+        self.devices = Devices(conf)
         self.node_timeout = int(conf.get('node_timeout', 3))
         self.conn_timeout = float(conf.get('conn_timeout', 0.5))
         replication_server = conf.get('replication_server', None)
@@ -70,8 +69,7 @@ class ContainerController(object):
             for h in conf.get('allowed_sync_hosts', '127.0.0.1').split(',')
             if h.strip()]
         self.replicator_rpc = ReplicatorRpc(
-            self.root, DATADIR, ContainerBroker, self.mount_check,
-            logger=self.logger)
+            self.devices, DATADIR, ContainerBroker, logger=self.logger)
         self.auto_create_account_prefix = \
             conf.get('auto_create_account_prefix') or '.'
         if config_true_value(conf.get('allow_versions', 'f')):
@@ -91,7 +89,10 @@ class ContainerController(object):
         """
         hsh = hash_path(account, container)
         db_dir = storage_directory(DATADIR, part, hsh)
-        db_path = os.path.join(self.root, drive, db_dir, hsh + '.db')
+        dev_path = self.devices.get_dev_path(drive)
+        if not dev_path:
+            return None
+        db_path = os.path.join(dev_path, db_dir, hsh + '.db')
         kwargs.setdefault('account', account)
         kwargs.setdefault('container', container)
         kwargs.setdefault('logger', self.logger)
@@ -189,9 +190,9 @@ class ContainerController(object):
                 not check_float(req.headers['x-timestamp']):
             return HTTPBadRequest(body='Missing timestamp', request=req,
                                   content_type='text/plain')
-        if self.mount_check and not check_mount(self.root, drive):
-            return HTTPInsufficientStorage(drive=drive, request=req)
         broker = self._get_container_broker(drive, part, account, container)
+        if not broker:
+            return HTTPInsufficientStorage(drive=drive, request=req)
         if account.startswith(self.auto_create_account_prefix) and obj and \
                 not os.path.exists(broker.db_file):
             try:
@@ -235,10 +236,10 @@ class ContainerController(object):
                                    self.allowed_sync_hosts)
             if err:
                 return HTTPBadRequest(err)
-        if self.mount_check and not check_mount(self.root, drive):
-            return HTTPInsufficientStorage(drive=drive, request=req)
         timestamp = normalize_timestamp(req.headers['x-timestamp'])
         broker = self._get_container_broker(drive, part, account, container)
+        if not broker:
+            return HTTPInsufficientStorage(drive=drive, request=req)
         if obj:     # put container object
             if account.startswith(self.auto_create_account_prefix) and \
                     not os.path.exists(broker.db_file):
@@ -292,11 +293,11 @@ class ContainerController(object):
         drive, part, account, container, obj = split_and_validate_path(
             req, 4, 5, True)
         out_content_type = get_listing_content_type(req)
-        if self.mount_check and not check_mount(self.root, drive):
-            return HTTPInsufficientStorage(drive=drive, request=req)
         broker = self._get_container_broker(drive, part, account, container,
                                             pending_timeout=0.1,
                                             stale_reads_ok=True)
+        if not broker:
+            return HTTPInsufficientStorage(drive=drive, request=req)
         if broker.is_deleted():
             return HTTPNotFound(request=req)
         info = broker.get_info()
@@ -361,11 +362,11 @@ class ContainerController(object):
                     request=req,
                     body='Maximum limit is %d' % CONTAINER_LISTING_LIMIT)
         out_content_type = get_listing_content_type(req)
-        if self.mount_check and not check_mount(self.root, drive):
-            return HTTPInsufficientStorage(drive=drive, request=req)
         broker = self._get_container_broker(drive, part, account, container,
                                             pending_timeout=0.1,
                                             stale_reads_ok=True)
+        if not broker:
+            return HTTPInsufficientStorage(drive=drive, request=req)
         if broker.is_deleted():
             return HTTPNotFound(request=req)
         info = broker.get_info()
@@ -421,8 +422,6 @@ class ContainerController(object):
         """
         post_args = split_and_validate_path(req, 3)
         drive, partition, hash = post_args
-        if self.mount_check and not check_mount(self.root, drive):
-            return HTTPInsufficientStorage(drive=drive, request=req)
         try:
             args = json.load(req.environ['wsgi.input'])
         except ValueError as err:
@@ -445,9 +444,9 @@ class ContainerController(object):
                                    self.allowed_sync_hosts)
             if err:
                 return HTTPBadRequest(err)
-        if self.mount_check and not check_mount(self.root, drive):
-            return HTTPInsufficientStorage(drive=drive, request=req)
         broker = self._get_container_broker(drive, part, account, container)
+        if not broker:
+            return HTTPInsufficientStorage(drive=drive, request=req)
         if broker.is_deleted():
             return HTTPNotFound(request=req)
         timestamp = normalize_timestamp(req.headers['x-timestamp'])
