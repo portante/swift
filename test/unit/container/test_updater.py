@@ -67,7 +67,7 @@ class TestContainerUpdater(unittest.TestCase):
         })
         self.assert_(hasattr(cu, 'logger'))
         self.assert_(cu.logger is not None)
-        self.assertEquals(cu.devices, self.devices_dir)
+        self.assertEquals(cu.devices.devices, self.devices_dir)
         self.assertEquals(cu.interval, 1)
         self.assertEquals(cu.concurrency, 2)
         self.assertEquals(cu.node_timeout, 5)

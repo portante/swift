@@ -399,7 +399,7 @@ class TestReaper(unittest.TestCase):
                patch('swift.account.reaper.AccountReaper.reap_account',
                      self.fake_reap_account)]
         with nested(*ctx):
-            r.reap_device('sda1')
+            r.reap_device(os.path.join(devices, 'sda1'))
         self.assertEqual(self.called_amount, 1)
 
     def test_reap_device_with_ts(self):
@@ -414,7 +414,7 @@ class TestReaper(unittest.TestCase):
                patch('swift.account.reaper.AccountReaper.reap_account',
                      self.fake_reap_account)]
         with nested(*ctx):
-            r.reap_device('sda1')
+            r.reap_device(os.path.join(devices, 'sda1'))
         self.assertEqual(self.called_amount, 0)
 
     def test_reap_device_with_not_my_ip(self):
@@ -429,7 +429,7 @@ class TestReaper(unittest.TestCase):
                patch('swift.account.reaper.AccountReaper.reap_account',
                      self.fake_reap_account)]
         with nested(*ctx):
-            r.reap_device('sda1')
+            r.reap_device(os.path.join(devices, 'sda1'))
         self.assertEqual(self.called_amount, 0)
 
     def test_run_once(self):
@@ -448,13 +448,13 @@ class TestReaper(unittest.TestCase):
         devices = prepare_data_dir()
         r = init_reaper(devices)
 
-        with patch('swift.account.reaper.os.path.ismount', lambda x: True):
+        with patch('swift.common.ondisk.check_mount', lambda x, y: True):
             with patch(
                     'swift.account.reaper.AccountReaper.reap_device') as foo:
                 r.run_once()
         self.assertEqual(foo.called, 1)
 
-        with patch('swift.account.reaper.os.path.ismount', lambda x: False):
+        with patch('swift.common.ondisk.check_mount', lambda x, y: False):
             with patch(
                     'swift.account.reaper.AccountReaper.reap_device') as foo:
                 r.run_once()

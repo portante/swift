@@ -26,7 +26,7 @@ import mock
 import simplejson
 
 from swift.common import db_replicator
-from swift.common.ondisk import normalize_timestamp
+from swift.common.ondisk import normalize_timestamp, Devices
 from swift.container import server as container_server
 from swift.common.exceptions import DriveNotMounted
 
@@ -565,36 +565,22 @@ class TestDBReplicator(unittest.TestCase):
         self.assertEqual('some_device', replicator.extract_device(
             '/some/root/some_device/deeper/and/deeper'))
 
-#    def test_dispatch(self):
-#        rpc = db_replicator.ReplicatorRpc('/', '/', FakeBroker, False)
-#        no_op = lambda *args, **kwargs: True
-#        self.assertEquals(rpc.dispatch(('drv', 'part', 'hash'), ('op',)
-#                ).status_int, 400)
-#        rpc.mount_check = True
-#        self.assertEquals(rpc.dispatch(('drv', 'part', 'hash'), ['op',]
-#                ).status_int, 507)
-#        rpc.mount_check = False
-#        rpc.rsync_then_merge = lambda drive, db_file,
-#                                      args: self.assertEquals(args, ['test1'])
-#        rpc.complete_rsync = lambda drive, db_file,
-#                                      args: self.assertEquals(args, ['test2'])
-#        rpc.dispatch(('drv', 'part', 'hash'), ['rsync_then_merge','test1'])
-#        rpc.dispatch(('drv', 'part', 'hash'), ['complete_rsync','test2'])
-#        rpc.dispatch(('drv', 'part', 'hash'), ['other_op',])
-
     def test_rsync_then_merge(self):
-        rpc = db_replicator.ReplicatorRpc('/', '/', FakeBroker, False)
+        devs = Devices({'devices': '/', 'mount_check': False})
+        rpc = db_replicator.ReplicatorRpc(devs, '/', FakeBroker, False)
         rpc.rsync_then_merge('sda1', '/srv/swift/blah', ('a', 'b'))
 
     def test_merge_items(self):
-        rpc = db_replicator.ReplicatorRpc('/', '/', FakeBroker, False)
+        devs = Devices({'devices': '/', 'mount_check': False})
+        rpc = db_replicator.ReplicatorRpc(devs, '/', FakeBroker, False)
         fake_broker = FakeBroker()
         args = ('a', 'b')
         rpc.merge_items(fake_broker, args)
         self.assertEquals(fake_broker.args, args)
 
     def test_merge_syncs(self):
-        rpc = db_replicator.ReplicatorRpc('/', '/', FakeBroker, False)
+        devs = Devices({'devices': '/', 'mount_check': False})
+        rpc = db_replicator.ReplicatorRpc(devs, '/', FakeBroker, False)
         fake_broker = FakeBroker()
         args = ('a', 'b')
         rpc.merge_syncs(fake_broker, args)
