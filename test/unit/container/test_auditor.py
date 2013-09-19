@@ -57,7 +57,8 @@ class TestAuditor(unittest.TestCase):
     def tearDown(self):
         rmtree(os.path.dirname(self.testdir), ignore_errors=1)
 
-    @mock.patch('swift.container.auditor.ContainerBroker', FakeContainerBroker)
+    @mock.patch('swift.container.auditor.ContainerBroker',
+                FakeContainerBroker)
     def test_run_forever(self):
         sleep_times = random.randint(5, 10)
         call_times = sleep_times - 1
@@ -92,7 +93,8 @@ class TestAuditor(unittest.TestCase):
         self.assertEquals(test_auditor.container_failures, 2 * call_times)
         self.assertEquals(test_auditor.container_passes, 3 * call_times)
 
-    @mock.patch('swift.container.auditor.ContainerBroker', FakeContainerBroker)
+    @mock.patch('swift.container.auditor.ContainerBroker',
+                FakeContainerBroker)
     def test_run_once(self):
         conf = {}
         test_auditor = auditor.ContainerAuditor(conf)
@@ -108,7 +110,8 @@ class TestAuditor(unittest.TestCase):
         self.assertEquals(test_auditor.container_failures, 2)
         self.assertEquals(test_auditor.container_passes, 3)
 
-    @mock.patch('swift.container.auditor.ContainerBroker', FakeContainerBroker)
+    @mock.patch('swift.container.auditor.ContainerBroker',
+                FakeContainerBroker)
     def test_container_auditor(self):
         conf = {}
         test_auditor = auditor.ContainerAuditor(conf)

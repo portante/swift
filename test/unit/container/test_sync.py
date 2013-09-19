@@ -468,7 +468,8 @@ class TestContainerSync(unittest.TestCase):
             metadata={'x-container-sync-to': ('http://127.0.0.1/a/c', 1),
                       'x-container-sync-key': ('key', 1)},
             items_since=[{'ROWID': 1, 'name': 'o'}])
-        with mock.patch('swift.container.sync.ContainerBroker', lambda p: fcb):
+        with mock.patch('swift.container.sync.ContainerBroker',
+                        lambda p: fcb):
             cs._myips = ['10.0.0.0']    # Match
             cs._myport = 1000           # Match
             cs.allowed_sync_hosts = ['127.0.0.1']

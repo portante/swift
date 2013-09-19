@@ -34,7 +34,15 @@ class AuditException(SwiftException):
     pass
 
 
-class DiskFileError(SwiftException):
+class OnDiskError(SwiftException):
+    pass
+
+
+class OnDiskDeviceUnavailable(OnDiskError):
+    pass
+
+
+class DiskFileError(OnDiskError):
     pass
 
 
@@ -54,7 +62,7 @@ class DiskFileNoSpace(DiskFileError):
     pass
 
 
-class DiskFileDeviceUnavailable(DiskFileError):
+class DiskFileDeviceUnavailable(OnDiskDeviceUnavailable):
     pass
 
 

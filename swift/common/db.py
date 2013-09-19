@@ -175,10 +175,9 @@ class DatabaseBroker(object):
     def __init__(self, db_file, timeout=BROKER_TIMEOUT, logger=None,
                  account=None, container=None, pending_timeout=None,
                  stale_reads_ok=False):
-        """Encapsulates working with a database."""
-        self.conn = None
+        self.conn = None       #: Not accessed directly, but returned by `get`
         self.db_file = db_file
-        self.pending_file = self.db_file + '.pending'
+        self.pending_file = db_file + '.pending'
         self.pending_timeout = pending_timeout or 10
         self.stale_reads_ok = stale_reads_ok
         self.db_dir = os.path.dirname(db_file)

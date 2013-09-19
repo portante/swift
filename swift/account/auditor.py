@@ -121,5 +121,5 @@ class AccountAuditor(Daemon):
             self.logger.increment('failures')
             self.account_failures += 1
             self.logger.exception(_('ERROR Could not get account info %s'),
-                                  (broker.db_file))
+                                  path)
         self.logger.timing_since('timing', start_time)

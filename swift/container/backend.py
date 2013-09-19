@@ -26,9 +26,13 @@ import errno
 import sqlite3
 
 from swift.common.utils import lock_parent_directory
-from swift.common.ondisk import normalize_timestamp
+from swift.common.ondisk import hash_path, normalize_timestamp, \
+    storage_directory
 from swift.common.db import DatabaseBroker, DatabaseConnectionError, \
     PENDING_CAP, PICKLE_PROTOCOL, utf8encode
+from swift.common.exceptions import OnDiskDeviceUnavailable
+
+DATADIR = 'containers'
 
 
 class EntityNotInitialized(Exception):
@@ -47,7 +51,8 @@ class EntityConflict(Exception):
 
 
 class ContainerBroker(DatabaseBroker):
-    """Encapsulates working with a container database."""
+    """Encapsulates working with a container database for in-tree users."""
+
     db_type = 'container'
     db_contains_type = 'object'
     db_reclaim_timestamp = 'created_at'
@@ -546,3 +551,28 @@ class ContainerBroker(DatabaseBroker):
                         WHERE remote_id=?
                     ''', (max_rowid, source))
             conn.commit()
+
+
+class ContainerAPI(ContainerBroker):
+    """
+    Encapsulates working with a container database.
+
+    :param devices: on-disk device management object
+    :param device: Device name
+    :param partition: Partition number as a string
+    :param acct: Account name, decoded from URL
+    :param cont: Container name
+
+    :param logger: Keyword argument; means the logger to use
+    """
+    def __init__(self, devices, device, partition, acct, cont, **kwargs):
+        dev_path = devices.get_dev_path(device)
+        if not dev_path:
+            raise OnDiskDeviceUnavailable()
+        top_path = os.path.join(dev_path, DATADIR)
+        hsh = hash_path(acct, cont)
+        dir_path = storage_directory(top_path, partition, hsh)
+        db_path = os.path.join(dir_path, hsh + '.db')
+        # So this is why you can take super(Foo) in a Bar.__init__()!
+        # Guido foresaw everything.
+        super(ContainerBroker, self).__init__(db_path, **kwargs)

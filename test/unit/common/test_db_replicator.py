@@ -431,28 +431,31 @@ class TestDBReplicator(unittest.TestCase):
 
     def test_replicate_object_quarantine(self):
         replicator = TestReplicator({})
-        self._patch(patch.object, replicator.brokerclass, 'db_file',
-                    '/a/b/c/d/e/hey')
         self._patch(patch.object, replicator.brokerclass,
                     'get_repl_missing_table', True)
+
+        # Use semi-realistic paths due to abundance of '..' in quarantine_db()
+        root = '/s/node/dev1'
+        dbpath = root + '/containers/0/rdx/hash'
+        dbfile = dbpath + '/hash.db'
 
         def mock_renamer(was, new, cause_colision=False):
             if cause_colision and '-' not in new:
                 raise OSError(errno.EEXIST, "File already exists")
-            self.assertEquals('/a/b/c/d/e', was)
+            self.assertEquals(dbpath, was)
             if '-' in new:
                 self.assert_(
-                    new.startswith('/a/quarantined/containers/e-'))
+                    new.startswith(root + '/quarantined/containers/hash-'))
             else:
-                self.assertEquals('/a/quarantined/containers/e', new)
+                self.assertEquals(root + '/quarantined/containers/hash', new)
 
         def mock_renamer_error(was, new):
             return mock_renamer(was, new, cause_colision=True)
         with patch.object(db_replicator, 'renamer', mock_renamer):
-            replicator._replicate_object('0', 'file', 'node_id')
+            replicator._replicate_object('0', dbfile, 'node_id')
         # try the double quarantine
         with patch.object(db_replicator, 'renamer', mock_renamer_error):
-            replicator._replicate_object('0', 'file', 'node_id')
+            replicator._replicate_object('0', dbfile, 'node_id')
 
     def test_replicate_object_delete_because_deleted(self):
         replicator = TestReplicator({})
@@ -575,7 +578,7 @@ class TestDBReplicator(unittest.TestCase):
         rpc = db_replicator.ReplicatorRpc(devs, '/', FakeBroker, False)
         fake_broker = FakeBroker()
         args = ('a', 'b')
-        rpc.merge_items(fake_broker, args)
+        rpc.merge_items(fake_broker, '/unused/merge/items', args)
         self.assertEquals(fake_broker.args, args)
 
     def test_merge_syncs(self):
@@ -583,7 +586,7 @@ class TestDBReplicator(unittest.TestCase):
         rpc = db_replicator.ReplicatorRpc(devs, '/', FakeBroker, False)
         fake_broker = FakeBroker()
         args = ('a', 'b')
-        rpc.merge_syncs(fake_broker, args)
+        rpc.merge_syncs(fake_broker, '/unused/db/file', args)
         self.assertEquals(fake_broker.args, (args[0],))
 
     def test_roundrobin_datadirs(self):

@@ -26,9 +26,13 @@ import errno
 import sqlite3
 
 from swift.common.utils import lock_parent_directory
-from swift.common.ondisk import normalize_timestamp
+from swift.common.ondisk import hash_path, normalize_timestamp, \
+    storage_directory
 from swift.common.db import DatabaseBroker, DatabaseConnectionError, \
     PENDING_CAP, PICKLE_PROTOCOL, utf8encode
+from swift.common.exceptions import OnDiskDeviceUnavailable
+
+DATADIR = 'accounts'
 
 
 class EntityAlreadyDeleted(Exception):
@@ -36,7 +40,8 @@ class EntityAlreadyDeleted(Exception):
 
 
 class AccountBroker(DatabaseBroker):
-    """Encapsulates working with an account database."""
+    """Encapsulates working with an account database for internal users."""
+
     db_type = 'account'
     db_contains_type = 'container'
     db_reclaim_timestamp = 'delete_timestamp'
@@ -432,3 +437,28 @@ class AccountBroker(DatabaseBroker):
                         WHERE remote_id=?
                     ''', (max_rowid, source))
             conn.commit()
+
+
+class AccountAPI(AccountBroker):
+    """
+    Encapsulates working with an account database.
+
+    :param devices: on-disk device management object
+    :param device: Device name
+    :param partition: Partition number as a string
+    :param acct: Account name, decoded from URL
+
+    :param logger: Keyword argument; means the logger to use
+    """
+
+    def __init__(self, devices, device, partition, acct, **kwargs):
+        dev_path = devices.get_dev_path(device)
+        if not dev_path:
+            raise OnDiskDeviceUnavailable()
+        top_path = os.path.join(dev_path, DATADIR)
+        hsh = hash_path(acct)
+        dir_path = storage_directory(top_path, partition, hsh)
+        db_path = os.path.join(dir_path, hsh + '.db')
+        # So this is why you can take super(Foo) in a Bar.__init__()!
+        # Guido foresaw everything.
+        super(AccountBroker, self).__init__(db_path, **kwargs)

@@ -170,8 +170,8 @@ class AccountReaper(Daemon):
                             break
                         elif fname.endswith('.db'):
                             self.start_time = time()
-                            broker = \
-                                AccountBroker(os.path.join(hsh_path, fname))
+                            path = os.path.join(hsh_path, fname)
+                            broker = AccountBroker(path)
                             if broker.is_status_deleted() and \
                                     not broker.empty():
                                 self.reap_account(broker, partition, nodes)

@@ -15,7 +15,6 @@
 
 from __future__ import with_statement
 
-import os
 import time
 import traceback
 from swift import gettext_ as _
@@ -23,15 +22,15 @@ from swift import gettext_ as _
 from eventlet import Timeout
 
 import swift.common.db
-from swift.account.backend import AccountBroker, EntityAlreadyDeleted
+from swift.account.backend import AccountBroker, AccountAPI, \
+    EntityAlreadyDeleted
 from swift.account.utils import account_listing_response
 from swift.common.db import DatabaseConnectionError, DatabaseAlreadyExists
 from swift.common.request_helpers import get_param, get_listing_content_type, \
     split_and_validate_path
 from swift.common.utils import get_logger, public, config_true_value, \
     json, timing_stats, replication
-from swift.common.ondisk import hash_path, normalize_timestamp, Devices, \
-    storage_directory
+from swift.common.ondisk import normalize_timestamp, Devices
 from swift.common.constraints import ACCOUNT_LISTING_LIMIT, check_float, \
     check_utf8
 from swift.common.db_replicator import ReplicatorRpc
@@ -40,7 +39,7 @@ from swift.common.swob import HTTPAccepted, HTTPBadRequest, \
     HTTPMethodNotAllowed, HTTPNoContent, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPConflict, Request, \
     HTTPInsufficientStorage, HTTPException
-
+from swift.common.exceptions import OnDiskDeviceUnavailable
 
 DATADIR = 'accounts'
 
@@ -50,29 +49,30 @@ class AccountController(object):
 
     def __init__(self, conf):
         self.logger = get_logger(conf, log_route='account-server')
-        self.devices = Devices(conf)
         replication_server = conf.get('replication_server', None)
         if replication_server is not None:
             replication_server = config_true_value(replication_server)
         self.replication_server = replication_server
+        self.auto_create_account_prefix = \
+            conf.get('auto_create_account_prefix') or '.'
+        self.setup(conf)
+
+    def setup(self, conf):
+        self.devices = Devices(conf)
         self.replicator_rpc = ReplicatorRpc(self.devices, DATADIR,
                                             AccountBroker,
                                             logger=self.logger)
-        self.auto_create_account_prefix = \
-            conf.get('auto_create_account_prefix') or '.'
         swift.common.db.DB_PREALLOCATION = \
             config_true_value(conf.get('db_preallocation', 'f'))
 
-    def _get_account_broker(self, drive, part, account, **kwargs):
-        hsh = hash_path(account)
-        db_dir = storage_directory(DATADIR, part, hsh)
-        dev_path = self.devices.get_dev_path(drive)
-        if not dev_path:
-            return None
-        db_path = os.path.join(dev_path, db_dir, hsh + '.db')
-        kwargs.setdefault('account', account)
+    def get_account_api(self, drive, part, acct, **kwargs):
+        kwargs.setdefault('account', acct)
         kwargs.setdefault('logger', self.logger)
-        return AccountBroker(db_path, **kwargs)
+        try:
+            broker = AccountAPI(self.devices, drive, part, acct, **kwargs)
+        except OnDiskDeviceUnavailable:
+            broker = None
+        return broker
 
     def _deleted_response(self, broker, req, resp, body=''):
         # We are here since either the account does not exist or
@@ -97,7 +97,7 @@ class AccountController(object):
                 not check_float(req.headers['x-timestamp']):
             return HTTPBadRequest(body='Missing timestamp', request=req,
                                   content_type='text/plain')
-        broker = self._get_account_broker(drive, part, account)
+        broker = self.get_account_api(drive, part, account)
         if not broker:
             return HTTPInsufficientStorage(drive=drive, request=req)
         try:
@@ -115,8 +115,8 @@ class AccountController(object):
             pending_timeout = None
             if 'x-trans-id' in req.headers:
                 pending_timeout = 3
-            broker = self._get_account_broker(drive, part, account,
-                                              pending_timeout=pending_timeout)
+            broker = self.get_account_api(drive, part, account,
+                                          pending_timeout=pending_timeout)
             if not broker:
                 return HTTPInsufficientStorage(drive=drive, request=req)
             if account.startswith(self.auto_create_account_prefix):
@@ -138,7 +138,7 @@ class AccountController(object):
             else:
                 return HTTPCreated(request=req)
         else:   # put account
-            broker = self._get_account_broker(drive, part, account)
+            broker = self.get_account_api(drive, part, account)
             if not broker:
                 return HTTPInsufficientStorage(drive=drive, request=req)
             timestamp = normalize_timestamp(req.headers['x-timestamp'])
@@ -170,9 +170,9 @@ class AccountController(object):
         """Handle HTTP HEAD request."""
         drive, part, account = split_and_validate_path(req, 3)
         out_content_type = get_listing_content_type(req)
-        broker = self._get_account_broker(drive, part, account,
-                                          pending_timeout=0.1,
-                                          stale_reads_ok=True)
+        broker = self.get_account_api(drive, part, account,
+                                      pending_timeout=0.1,
+                                      stale_reads_ok=True)
         if not broker:
             return HTTPInsufficientStorage(drive=drive, request=req)
         if broker.is_deleted():
@@ -212,9 +212,9 @@ class AccountController(object):
         end_marker = get_param(req, 'end_marker')
         out_content_type = get_listing_content_type(req)
 
-        broker = self._get_account_broker(drive, part, account,
-                                          pending_timeout=0.1,
-                                          stale_reads_ok=True)
+        broker = self.get_account_api(drive, part, account,
+                                      pending_timeout=0.1,
+                                      stale_reads_ok=True)
         if not broker:
             return HTTPInsufficientStorage(drive=drive, request=req)
         if broker.is_deleted():
@@ -251,7 +251,7 @@ class AccountController(object):
             return HTTPBadRequest(body='Missing or bad timestamp',
                                   request=req,
                                   content_type='text/plain')
-        broker = self._get_account_broker(drive, part, account)
+        broker = self.get_account_api(drive, part, account)
         if not broker:
             return HTTPInsufficientStorage(drive=drive, request=req)
         if broker.is_deleted():

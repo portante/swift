@@ -433,7 +433,7 @@ class Replicator(Daemon):
         except (Exception, Timeout) as e:
             if 'no such table' in str(e):
                 self.logger.error(_('Quarantining DB %s'), object_file)
-                quarantine_db(broker.db_file, broker.db_type)
+                quarantine_db(object_file, broker.db_type)
             else:
                 self.logger.exception(_('ERROR reading db %s'), object_file)
             self.stats['failure'] += 1
@@ -594,9 +594,9 @@ class ReplicatorRpc(object):
             mkdirs(os.path.join(dev_path, 'tmp'))
             if not os.path.exists(db_file):
                 return HTTPNotFound()
-            return getattr(self, op)(self.broker_class(db_file), args)
+            return getattr(self, op)(self.broker_class(db_file), db_file, args)
 
-    def sync(self, broker, args):
+    def sync(self, broker, db_file, args):
         (remote_sync, hash_, id_, created_at, put_timestamp,
          delete_timestamp, metadata) = args
         timemark = time.time()
@@ -605,7 +605,7 @@ class ReplicatorRpc(object):
         except (Exception, Timeout) as e:
             if 'no such table' in str(e):
                 self.logger.error(_("Quarantining DB %s") % broker.db_file)
-                quarantine_db(broker.db_file, broker.db_type)
+                quarantine_db(db_file, broker.db_type)
                 return HTTPNotFound()
             raise
         timespan = time.time() - timemark
@@ -646,11 +646,11 @@ class ReplicatorRpc(object):
                                     'merge_syncs: %.02fs') % timespan)
         return Response(simplejson.dumps(info))
 
-    def merge_syncs(self, broker, args):
+    def merge_syncs(self, broker, db_file, args):
         broker.merge_syncs(args[0])
         return HTTPAccepted()
 
-    def merge_items(self, broker, args):
+    def merge_items(self, broker, db_file, args):
         broker.merge_items(args[0], args[1])
         return HTTPAccepted()
 

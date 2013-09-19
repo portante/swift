@@ -538,3 +538,5 @@ class TestAccountBrokerBeforeMetadata(TestAccountBroker):
         broker.initialize(normalize_timestamp('1'))
         with broker.get() as conn:
             conn.execute('SELECT metadata FROM account_stat')
+
+    # XXX Add a test for the new AccountBroker with stable API
