@@ -297,7 +297,7 @@ class Replicator(Daemon):
             self.logger.debug(_(
                 'Synchronization for %s has fallen more than '
                 '%s rows behind; moving on and will try again next pass.') %
-                (broker.db_file, self.max_diffs * self.per_diff))
+                (broker, self.max_diffs * self.per_diff))
             self.stats['diff_capped'] += 1
             self.logger.increment('diff_caps')
         else:
