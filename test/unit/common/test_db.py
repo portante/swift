@@ -112,7 +112,7 @@ class TestDatabaseBroker(unittest.TestCase):
     def test_memory_db_init(self):
         broker = DatabaseBroker(':memory:')
         self.assertEqual(broker.db_file, ':memory:')
-        self.assertRaises(AttributeError, broker.initialize,
+        self.assertRaises(NotImplementedError, broker.initialize,
                           normalize_timestamp('0'))
 
     def test_disk_db_init(self):
@@ -139,7 +139,7 @@ class TestDatabaseBroker(unittest.TestCase):
             self.assertEquals(test_size[0], 1024 * 1024)
 
     def test_initialize(self):
-        self.assertRaises(AttributeError,
+        self.assertRaises(NotImplementedError,
                           DatabaseBroker(':memory:').initialize,
                           normalize_timestamp('1'))
         stub_dict = {}

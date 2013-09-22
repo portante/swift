@@ -31,6 +31,10 @@ from swift.common.db import DatabaseBroker, DatabaseConnectionError, \
     PENDING_CAP, PICKLE_PROTOCOL, utf8encode
 
 
+class EntityAlreadyDeleted(Exception):
+    pass
+
+
 class AccountBroker(DatabaseBroker):
     """Encapsulates working with an account database."""
     db_type = 'account'
@@ -156,6 +160,17 @@ class AccountBroker(DatabaseBroker):
                 status = 'DELETED',
                 status_changed_at = ?
             WHERE delete_timestamp < ? """, (timestamp, timestamp, timestamp))
+
+    def delete(self, timestamp):
+        """
+        Mark the entity as deleted
+
+        :param timestamp: delete timestamp
+        :raises EntityAlreadyDeleted: the entity is already deleted
+        """
+        if self.is_deleted():
+            raise EntityAlreadyDeleted()
+        self.delete_db(timestamp)
 
     def _commit_puts_load(self, item_list, entry):
         """See :func:`swift.common.db.DatabaseBroker._commit_puts_load`"""

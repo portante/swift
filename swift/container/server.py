@@ -25,7 +25,8 @@ from xml.etree.cElementTree import Element, SubElement, tostring
 from eventlet import Timeout
 
 import swift.common.db
-from swift.container.backend import ContainerBroker
+from swift.container.backend import ContainerBroker, \
+    EntityConflict, EntityNotInitialized, EntityNotEmpty
 from swift.common.db import DatabaseAlreadyExists
 from swift.common.request_helpers import get_param, get_listing_content_type, \
     split_and_validate_path
@@ -193,26 +194,27 @@ class ContainerController(object):
         broker = self._get_container_broker(drive, part, account, container)
         if not broker:
             return HTTPInsufficientStorage(drive=drive, request=req)
-        if account.startswith(self.auto_create_account_prefix) and obj and \
-                not os.path.exists(broker.db_file):
+        if account.startswith(self.auto_create_account_prefix) and obj:
             try:
                 broker.initialize(normalize_timestamp(
                     req.headers.get('x-timestamp') or time.time()))
             except DatabaseAlreadyExists:
                 pass
-        if not os.path.exists(broker.db_file):
-            return HTTPNotFound()
         if obj:     # delete object
-            broker.delete_object(obj, req.headers.get('x-timestamp'))
+            try:
+                broker.delete_object(obj, req.headers.get('x-timestamp'))
+            except EntityNotInitialized:
+                return HTTPNotFound()
             return HTTPNoContent(request=req)
         else:
             # delete container
-            if not broker.empty():
+            try:
+                existed = broker.delete(req.headers['x-timestamp'])
+            except EntityNotInitialized:
+                return HTTPNotFound()
+            except EntityNotEmpty:
                 return HTTPConflict(request=req)
-            existed = float(broker.get_info()['put_timestamp']) and \
-                not broker.is_deleted()
-            broker.delete_db(req.headers['X-Timestamp'])
-            if not broker.is_deleted():
+            except EntityConflict:
                 return HTTPConflict(request=req)
             resp = self.account_update(req, account, container, broker)
             if resp:
@@ -241,26 +243,23 @@ class ContainerController(object):
         if not broker:
             return HTTPInsufficientStorage(drive=drive, request=req)
         if obj:     # put container object
-            if account.startswith(self.auto_create_account_prefix) and \
-                    not os.path.exists(broker.db_file):
+            if account.startswith(self.auto_create_account_prefix):
                 try:
                     broker.initialize(timestamp)
                 except DatabaseAlreadyExists:
                     pass
-            if not os.path.exists(broker.db_file):
+            try:
+                broker.put_object(obj, timestamp, int(req.headers['x-size']),
+                                  req.headers['x-content-type'],
+                                  req.headers['x-etag'])
+            except EntityNotInitialized:
                 return HTTPNotFound()
-            broker.put_object(obj, timestamp, int(req.headers['x-size']),
-                              req.headers['x-content-type'],
-                              req.headers['x-etag'])
             return HTTPCreated(request=req)
         else:   # put container
-            if not os.path.exists(broker.db_file):
-                try:
-                    broker.initialize(timestamp)
-                    created = True
-                except DatabaseAlreadyExists:
-                    pass
-            else:
+            try:
+                broker.initialize(timestamp)
+                created = True
+            except DatabaseAlreadyExists:
                 created = broker.is_deleted()
                 broker.update_put_timestamp(timestamp)
                 if broker.is_deleted():

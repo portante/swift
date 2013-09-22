@@ -23,7 +23,7 @@ from swift import gettext_ as _
 from eventlet import Timeout
 
 import swift.common.db
-from swift.account.backend import AccountBroker
+from swift.account.backend import AccountBroker, EntityAlreadyDeleted
 from swift.account.utils import account_listing_response
 from swift.common.db import DatabaseConnectionError, DatabaseAlreadyExists
 from swift.common.request_helpers import get_param, get_listing_content_type, \
@@ -100,9 +100,10 @@ class AccountController(object):
         broker = self._get_account_broker(drive, part, account)
         if not broker:
             return HTTPInsufficientStorage(drive=drive, request=req)
-        if broker.is_deleted():
+        try:
+            broker.delete(req.headers['x-timestamp'])
+        except EntityAlreadyDeleted:
             return self._deleted_response(broker, req, HTTPNotFound)
-        broker.delete_db(req.headers['x-timestamp'])
         return self._deleted_response(broker, req, HTTPNoContent)
 
     @public
@@ -118,8 +119,7 @@ class AccountController(object):
                                               pending_timeout=pending_timeout)
             if not broker:
                 return HTTPInsufficientStorage(drive=drive, request=req)
-            if account.startswith(self.auto_create_account_prefix) and \
-                    not os.path.exists(broker.db_file):
+            if account.startswith(self.auto_create_account_prefix):
                 try:
                     broker.initialize(normalize_timestamp(
                         req.headers.get('x-timestamp') or time.time()))
@@ -142,16 +142,13 @@ class AccountController(object):
             if not broker:
                 return HTTPInsufficientStorage(drive=drive, request=req)
             timestamp = normalize_timestamp(req.headers['x-timestamp'])
-            if not os.path.exists(broker.db_file):
-                try:
-                    broker.initialize(timestamp)
-                    created = True
-                except DatabaseAlreadyExists:
-                    pass
-            elif broker.is_status_deleted():
-                return self._deleted_response(broker, req, HTTPForbidden,
-                                              body='Recently deleted')
-            else:
+            try:
+                broker.initialize(timestamp)
+                created = True
+            except DatabaseAlreadyExists:
+                if broker.is_status_deleted():
+                    return self._deleted_response(broker, req, HTTPForbidden,
+                                                  body='Recently deleted')
                 created = broker.is_deleted()
                 broker.update_put_timestamp(timestamp)
                 if broker.is_deleted():

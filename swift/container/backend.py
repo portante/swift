@@ -31,6 +31,21 @@ from swift.common.db import DatabaseBroker, DatabaseConnectionError, \
     PENDING_CAP, PICKLE_PROTOCOL, utf8encode
 
 
+class EntityNotInitialized(Exception):
+    """The broker refers to an entity that was not initialized."""
+    pass
+
+
+class EntityNotEmpty(Exception):
+    """Deleting an non-empty entity."""
+    pass
+
+
+class EntityConflict(Exception):
+    """Operation on the broker conflicted with a simultaneous request."""
+    pass
+
+
 class ContainerBroker(DatabaseBroker):
     """Encapsulates working with a container database."""
     db_type = 'container'
@@ -163,6 +178,27 @@ class ContainerBroker(DatabaseBroker):
                 status_changed_at = ?
             WHERE delete_timestamp < ? """, (timestamp, timestamp, timestamp))
 
+    def delete(self, timestamp):
+        """
+        Mark the entity as deleted
+
+        :param timestamp: delete timestamp
+        :raises EntityNotInitialized: underlying entity is not initialized
+        :raises EntityNotEmpty: underlying container still contains objects
+        :raises EntityConflict: external interference precluded success
+        """
+        if not os.path.exists(self.db_file):
+            raise EntityNotInitialized()
+        if not self.empty():
+            raise EntityNotEmpty()
+        existed = float(self.get_info()['put_timestamp']) and \
+            not self.is_deleted()
+        self.delete_db(timestamp)
+        # XXX Not sure how this can happen.
+        if not self.is_deleted():
+            raise EntityConflict()
+        return existed
+
     def _commit_puts_load(self, item_list, entry):
         """See :func:`swift.common.db.DatabaseBroker._commit_puts_load`"""
         (name, timestamp, size, content_type, etag, deleted) = \
@@ -192,6 +228,8 @@ class ContainerBroker(DatabaseBroker):
 
         :param name: object name to be deleted
         :param timestamp: timestamp when the object was marked as deleted
+
+        :raises EntityNotInitialized: container is not initialized
         """
         self.put_object(name, timestamp, 0, 'application/deleted', 'noetag', 1)
 
@@ -206,7 +244,15 @@ class ContainerBroker(DatabaseBroker):
         :param etag: object etag
         :param deleted: if True, marks the object as deleted and sets the
                         deteleted_at timestamp to timestamp
+
+        :raises EntityNotInitialized: container was not initialized
         """
+        if self.db_file == ':memory:':
+            if not self.conn:
+                raise EntityNotInitialized()
+        else:
+            if not os.path.exists(self.db_file):
+                raise EntityNotInitialized()
         record = {'name': name, 'created_at': timestamp, 'size': size,
                   'content_type': content_type, 'etag': etag,
                   'deleted': deleted}

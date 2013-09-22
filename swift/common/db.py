@@ -196,9 +196,21 @@ class DatabaseBroker(object):
         """
         return self.db_file
 
+    def _initialize(self, conn, put_timestamp):
+        """
+        Internal detail; overridden by ContainerBroker and AccountBroker
+        as a way to share most of broker.initialize() code.
+
+        In AccountBroker, calls broker.create_container_table() and
+        broker.create_account_stat_table().
+        """
+        raise NotImplementedError
+
     def initialize(self, put_timestamp=None):
         """
         Create the DB
+
+        This can raise DatabaseAlreadyExists.
 
         :param put_timestamp: timestamp of initial PUT request
         """
@@ -206,6 +218,10 @@ class DatabaseBroker(object):
             tmp_db_file = None
             conn = get_db_connection(self.db_file, self.timeout)
         else:
+            # This is checked under a lock below, but this allows to bail
+            # quickly, for benchmarks.
+            if os.path.exists(self.db_file):
+                raise DatabaseAlreadyExists(self.db_file)
             mkdirs(self.db_dir)
             fd, tmp_db_file = mkstemp(suffix='.tmp', dir=self.db_dir)
             os.close(fd)
@@ -276,7 +292,8 @@ class DatabaseBroker(object):
 
     def delete_db(self, timestamp):
         """
-        Mark the DB as deleted
+        Mark the DB as deleted. Not a part of back-end API officially,
+        only used internally by the baseline implementation.
 
         :param timestamp: delete timestamp
         """
@@ -470,6 +487,8 @@ class DatabaseBroker(object):
     def get_replication_info(self):
         """
         Get information about the DB required for replication.
+
+        Flushes pending updates, raises LockTimeout if not self.stale_reads_ok.
 
         :returns: dict containing keys: hash, id, created_at, put_timestamp,
             delete_timestamp, count, max_row, and metadata
