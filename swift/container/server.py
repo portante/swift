@@ -414,23 +414,6 @@ class ContainerController(object):
         return ret
 
     @public
-    @replication
-    @timing_stats(sample_rate=0.01)
-    def REPLICATE(self, req):
-        """
-        Handle HTTP REPLICATE request (json-encoded RPC calls for replication.)
-        """
-        post_args = split_and_validate_path(req, 3)
-        drive, partition, hash = post_args
-        try:
-            args = json.load(req.environ['wsgi.input'])
-        except ValueError as err:
-            return HTTPBadRequest(body=str(err), content_type='text/plain')
-        ret = self.replicator_rpc.dispatch(post_args, args)
-        ret.request = req
-        return ret
-
-    @public
     @timing_stats()
     def POST(self, req):
         """Handle HTTP POST request."""
@@ -463,6 +446,23 @@ class ContainerController(object):
                     broker.set_x_container_sync_points(-1, -1)
             broker.update_metadata(metadata)
         return HTTPNoContent(request=req)
+
+    @public
+    @replication
+    @timing_stats(sample_rate=0.01)
+    def REPLICATE(self, req):
+        """
+        Handle HTTP REPLICATE request (json-encoded RPC calls for replication.)
+        """
+        post_args = split_and_validate_path(req, 3)
+        drive, partition, hash = post_args
+        try:
+            args = json.load(req.environ['wsgi.input'])
+        except ValueError as err:
+            return HTTPBadRequest(body=str(err), content_type='text/plain')
+        ret = self.replicator_rpc.dispatch(post_args, args)
+        ret.request = req
+        return ret
 
     def __call__(self, env, start_response):
         start_time = time.time()
