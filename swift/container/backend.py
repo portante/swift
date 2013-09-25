@@ -29,25 +29,12 @@ from swift.common.utils import lock_parent_directory
 from swift.common.ondisk import hash_path, normalize_timestamp, \
     storage_directory
 from swift.common.db import DatabaseBroker, DatabaseConnectionError, \
-    PENDING_CAP, PICKLE_PROTOCOL, utf8encode
-from swift.common.exceptions import OnDiskDeviceUnavailable
+    PENDING_CAP, PICKLE_PROTOCOL, utf8encode, DatabaseAlreadyExists
+from swift.common.exceptions import OnDiskDeviceUnavailable, \
+    ContainerNotFound, ContainerNotEmpty, ContainerConflict, \
+    ContainerDeleted
 
 DATADIR = 'containers'
-
-
-class EntityNotInitialized(Exception):
-    """The broker refers to an entity that was not initialized."""
-    pass
-
-
-class EntityNotEmpty(Exception):
-    """Deleting an non-empty entity."""
-    pass
-
-
-class EntityConflict(Exception):
-    """Operation on the broker conflicted with a simultaneous request."""
-    pass
 
 
 class ContainerBroker(DatabaseBroker):
@@ -188,20 +175,20 @@ class ContainerBroker(DatabaseBroker):
         Mark the entity as deleted
 
         :param timestamp: delete timestamp
-        :raises EntityNotInitialized: underlying entity is not initialized
-        :raises EntityNotEmpty: underlying container still contains objects
-        :raises EntityConflict: external interference precluded success
+        :raises ContainerNotFound: underlying entity is not initialized
+        :raises ContainerNotEmpty: underlying container still contains objects
+        :raises ContainerConflict: external interference precluded success
         """
         if not os.path.exists(self.db_file):
-            raise EntityNotInitialized()
+            raise ContainerNotFound()
         if not self.empty():
-            raise EntityNotEmpty()
+            raise ContainerNotEmpty()
         existed = float(self.get_info()['put_timestamp']) and \
             not self.is_deleted()
         self.delete_db(timestamp)
         # XXX Not sure how this can happen.
         if not self.is_deleted():
-            raise EntityConflict()
+            raise ContainerConflict()
         return existed
 
     def _commit_puts_load(self, item_list, entry):
@@ -234,7 +221,7 @@ class ContainerBroker(DatabaseBroker):
         :param name: object name to be deleted
         :param timestamp: timestamp when the object was marked as deleted
 
-        :raises EntityNotInitialized: container is not initialized
+        :raises ContainerNotFound: container is not initialized
         """
         self.put_object(name, timestamp, 0, 'application/deleted', 'noetag', 1)
 
@@ -250,14 +237,14 @@ class ContainerBroker(DatabaseBroker):
         :param deleted: if True, marks the object as deleted and sets the
                         deteleted_at timestamp to timestamp
 
-        :raises EntityNotInitialized: container was not initialized
+        :raises ContainerNotFound: container was not initialized
         """
         if self.db_file == ':memory:':
             if not self.conn:
-                raise EntityNotInitialized()
+                raise ContainerNotFound()
         else:
             if not os.path.exists(self.db_file):
-                raise EntityNotInitialized()
+                raise ContainerNotFound()
         record = {'name': name, 'created_at': timestamp, 'size': size,
                   'content_type': content_type, 'etag': etag,
                   'deleted': deleted}
@@ -575,4 +562,127 @@ class ContainerAPI(ContainerBroker):
         db_path = os.path.join(dir_path, hsh + '.db')
         # So this is why you can take super(Foo) in a Bar.__init__()!
         # Guido foresaw everything.
-        super(ContainerBroker, self).__init__(db_path, **kwargs)
+        super(ContainerAPI, self).__init__(db_path, **kwargs)
+
+    def delete_object(self, name, timestamp, auto_create=False):
+        """
+        Mark an object deleted.
+
+        :param name: object name to be deleted
+        :param timestamp: timestamp when the object was marked as deleted
+
+        :raises ContainerNotFound: container is not initialized
+        """
+        if auto_create:
+            try:
+                self.initialize(timestamp)
+            except DatabaseAlreadyExists:
+                pass
+        super(ContainerAPI, self).put_object(
+            name, timestamp, 0, 'application/deleted', 'noetag', 1)
+
+    def delete(self, timestamp):
+        """
+        Place holder to show this is part of the API.
+        """
+        return super(ContainerAPI, self).delete(timestamp)
+
+    def put_object(self, name, timestamp, size, content_type, etag,
+                   auto_create):
+        """
+        Creates an object in the DB with its metadata.
+
+        :param name: object name to be created
+        :param timestamp: timestamp of when the object was created
+        :param size: object size
+        :param content_type: object content-type
+        :param etag: object etag
+        :param auto_create: attempt to create the database if it does not exist
+
+        :raises ContainerNotFound: container was not initialized
+        """
+        if auto_create:
+            try:
+                self.initialize(timestamp)
+            except DatabaseAlreadyExists:
+                pass
+        super(ContainerAPI, self).put_object(
+            name, timestamp, size, content_type, etag)
+
+    def create(self, timestamp, metadata):
+        """
+        Create the container.
+
+        :param timestamp: creation for container
+        :param metadata: metadata to be initially associated with the container
+        :returns: True if the container was created, False if it existed
+                  previously
+        :raises ContainerConflict: if a race is detected with a delete
+                                   operation
+        """
+        try:
+            self.initialize(timestamp)
+            created = True
+        except DatabaseAlreadyExists:
+            created = self.is_deleted()
+            self.update_put_timestamp(timestamp)
+            if self.is_deleted():
+                raise ContainerConflict()
+        if metadata:
+            if 'X-Container-Sync-To' in metadata:
+                if 'X-Container-Sync-To' not in self.metadata or \
+                        metadata['X-Container-Sync-To'][0] != \
+                        self.metadata['X-Container-Sync-To'][0]:
+                    self.set_x_container_sync_points(-1, -1)
+        super(ContainerAPI, self).update_metadata(metadata)
+        return created
+
+    def get_info(self, ignore_deleted=False):
+        """
+        Get global data for the container.
+
+        :returns: dict with keys: account, container, created_at, metadata,
+                  put_timestamp, delete_timestamp, object_count, bytes_used,
+                  reported_put_timestamp, reported_delete_timestamp,
+                  reported_object_count, reported_bytes_used, hash, id,
+                  x_container_sync_point1, and x_container_sync_point2.
+        """
+        if not ignore_deleted and self.is_deleted():
+            return None
+        info = super(ContainerAPI, self).get_info()
+        info['metadata'] = self.metadata
+        return info
+
+    def list_objects_iter(self, limit, marker, end_marker, prefix, delimiter,
+                          path=None):
+        """
+        Get a list of objects sorted by name starting at marker onward, up
+        to limit entries.  Entries will begin with the prefix and will not
+        have the delimiter after the prefix.
+
+        :param limit: maximum number of entries to get
+        :param marker: marker query
+        :param end_marker: end marker query
+        :param prefix: prefix query
+        :param delimiter: delimiter for query
+        :param path: if defined, will set the prefix and delimter based on
+                     the path
+
+        :returns: list of tuples of (name, created_at, size, content_type,
+                  etag)
+        """
+        return super(ContainerAPI, self).list_objects_iter(
+            limit, marker, end_marker, prefix, delimiter, path)
+
+    def update_metadata(self, metadata):
+        """
+        """
+        if self.is_deleted():
+            raise ContainerDeleted()
+        if metadata:
+            if 'X-Container-Sync-To' in metadata:
+                if 'X-Container-Sync-To' not in self.metadata or \
+                        metadata['X-Container-Sync-To'][0] != \
+                        self.metadata['X-Container-Sync-To'][0]:
+                    self.set_x_container_sync_points(-1, -1)
+        super(ContainerAPI, self).update_metadata(metadata)

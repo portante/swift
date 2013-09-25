@@ -82,6 +82,14 @@ class ContainerConflict(SwiftException):
     pass
 
 
+class ContainerNotFound(SwiftException):
+    pass
+
+
+class ContainerNotEmpty(SwiftException):
+    pass
+
+
 class PathNotDir(OSError):
     pass
 

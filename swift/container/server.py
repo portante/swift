@@ -25,9 +25,7 @@ from xml.etree.cElementTree import Element, SubElement, tostring
 from eventlet import Timeout
 
 import swift.common.db
-from swift.container.backend import ContainerBroker, ContainerAPI, \
-    EntityConflict, EntityNotInitialized, EntityNotEmpty
-from swift.common.db import DatabaseAlreadyExists
+from swift.container.backend import ContainerBroker, ContainerAPI
 from swift.common.request_helpers import get_param, get_listing_content_type, \
     split_and_validate_path
 from swift.common.utils import get_logger, public, validate_sync_to, \
@@ -37,7 +35,9 @@ from swift.common.ondisk import normalize_timestamp, Devices
 from swift.common.constraints import CONTAINER_LISTING_LIMIT, check_float, \
     check_utf8
 from swift.common.bufferedhttp import http_connect
-from swift.common.exceptions import ConnectionTimeout, OnDiskDeviceUnavailable
+from swift.common.exceptions import ConnectionTimeout, ContainerConflict, \
+    ContainerNotFound, ContainerNotEmpty, ContainerDeleted, \
+    OnDiskDeviceUnavailable
 from swift.common.db_replicator import ReplicatorRpc
 from swift.common.http import HTTP_NOT_FOUND, is_success
 from swift.common.swob import HTTPAccepted, HTTPBadRequest, HTTPConflict, \
@@ -140,7 +140,7 @@ class ContainerController(object):
         for account_host, account_device in updates:
             account_ip, account_port = account_host.rsplit(':', 1)
             new_path = '/' + '/'.join([account, container])
-            info = broker.get_info()
+            info = broker.get_info(ignore_deleted=True)
             account_headers = HeaderKeyDict({
                 'x-put-timestamp': info['put_timestamp'],
                 'x-delete-timestamp': info['delete_timestamp'],
@@ -195,34 +195,29 @@ class ContainerController(object):
         broker = self.get_container_api(drive, part, account, container)
         if not broker:
             return HTTPInsufficientStorage(drive=drive, request=req)
-        if account.startswith(self.auto_create_account_prefix) and obj:
-            try:
-                broker.initialize(normalize_timestamp(
-                    req.headers.get('x-timestamp') or time.time()))
-            except DatabaseAlreadyExists:
-                pass
         if obj:     # delete object
+            auto_create = account.startswith(self.auto_create_account_prefix)
+            timestamp = normalize_timestamp(
+                req.headers.get('x-timestamp') or time.time())
             try:
-                broker.delete_object(obj, req.headers.get('x-timestamp'))
-            except EntityNotInitialized:
-                return HTTPNotFound()
+                broker.delete_object(obj, timestamp, auto_create)
+            except ContainerNotFound:
+                return HTTPNotFound(request=req)
             return HTTPNoContent(request=req)
         else:
             # delete container
             try:
                 existed = broker.delete(req.headers['x-timestamp'])
-            except EntityNotInitialized:
-                return HTTPNotFound()
-            except EntityNotEmpty:
-                return HTTPConflict(request=req)
-            except EntityConflict:
+            except ContainerNotFound:
+                return HTTPNotFound(request=req)
+            except (ContainerNotEmpty, ContainerConflict):
                 return HTTPConflict(request=req)
             resp = self.account_update(req, account, container, broker)
             if resp:
                 return resp
             if existed:
                 return HTTPNoContent(request=req)
-            return HTTPNotFound()
+            return HTTPNotFound(request=req)
 
     @public
     @timing_stats()
@@ -244,40 +239,25 @@ class ContainerController(object):
         if not broker:
             return HTTPInsufficientStorage(drive=drive, request=req)
         if obj:     # put container object
-            if account.startswith(self.auto_create_account_prefix):
-                try:
-                    broker.initialize(timestamp)
-                except DatabaseAlreadyExists:
-                    pass
+            auto_create = account.startswith(self.auto_create_account_prefix)
             try:
                 broker.put_object(obj, timestamp, int(req.headers['x-size']),
                                   req.headers['x-content-type'],
-                                  req.headers['x-etag'])
-            except EntityNotInitialized:
-                return HTTPNotFound()
+                                  req.headers['x-etag'], auto_create)
+            except ContainerNotFound:
+                return HTTPNotFound(request=req)
             return HTTPCreated(request=req)
         else:   # put container
-            try:
-                broker.initialize(timestamp)
-                created = True
-            except DatabaseAlreadyExists:
-                created = broker.is_deleted()
-                broker.update_put_timestamp(timestamp)
-                if broker.is_deleted():
-                    return HTTPConflict(request=req)
             metadata = {}
             metadata.update(
                 (key, (value, timestamp))
                 for key, value in req.headers.iteritems()
                 if key.lower() in self.save_headers or
                 key.lower().startswith('x-container-meta-'))
-            if metadata:
-                if 'X-Container-Sync-To' in metadata:
-                    if 'X-Container-Sync-To' not in broker.metadata or \
-                            metadata['X-Container-Sync-To'][0] != \
-                            broker.metadata['X-Container-Sync-To'][0]:
-                        broker.set_x_container_sync_points(-1, -1)
-                broker.update_metadata(metadata)
+            try:
+                created = broker.create(timestamp, metadata)
+            except ContainerConflict:
+                return HTTPConflict(request=req)
             resp = self.account_update(req, account, container, broker)
             if resp:
                 return resp
@@ -298,9 +278,9 @@ class ContainerController(object):
                                         stale_reads_ok=True)
         if not broker:
             return HTTPInsufficientStorage(drive=drive, request=req)
-        if broker.is_deleted():
-            return HTTPNotFound(request=req)
         info = broker.get_info()
+        if not info:
+            return HTTPNotFound(request=req)
         headers = {
             'X-Container-Object-Count': info['object_count'],
             'X-Container-Bytes-Used': info['bytes_used'],
@@ -309,7 +289,7 @@ class ContainerController(object):
         }
         headers.update(
             (key, value)
-            for key, (value, timestamp) in broker.metadata.iteritems()
+            for key, (value, timestamp) in info['metadata'].iteritems()
             if value != '' and (key.lower() in self.save_headers or
                                 key.lower().startswith('x-container-meta-')))
         headers['Content-Type'] = out_content_type
@@ -367,16 +347,16 @@ class ContainerController(object):
                                         stale_reads_ok=True)
         if not broker:
             return HTTPInsufficientStorage(drive=drive, request=req)
-        if broker.is_deleted():
-            return HTTPNotFound(request=req)
         info = broker.get_info()
+        if not info:
+            return HTTPNotFound(request=req)
         resp_headers = {
             'X-Container-Object-Count': info['object_count'],
             'X-Container-Bytes-Used': info['bytes_used'],
             'X-Timestamp': info['created_at'],
             'X-PUT-Timestamp': info['put_timestamp'],
         }
-        for key, (value, timestamp) in broker.metadata.iteritems():
+        for key, (value, timestamp) in info['metadata'].iteritems():
             if value and (key.lower() in self.save_headers or
                           key.lower().startswith('x-container-meta-')):
                 resp_headers[key] = value
@@ -430,21 +410,16 @@ class ContainerController(object):
         broker = self.get_container_api(drive, part, account, container)
         if not broker:
             return HTTPInsufficientStorage(drive=drive, request=req)
-        if broker.is_deleted():
-            return HTTPNotFound(request=req)
         timestamp = normalize_timestamp(req.headers['x-timestamp'])
         metadata = {}
         metadata.update(
             (key, (value, timestamp)) for key, value in req.headers.iteritems()
             if key.lower() in self.save_headers or
             key.lower().startswith('x-container-meta-'))
-        if metadata:
-            if 'X-Container-Sync-To' in metadata:
-                if 'X-Container-Sync-To' not in broker.metadata or \
-                        metadata['X-Container-Sync-To'][0] != \
-                        broker.metadata['X-Container-Sync-To'][0]:
-                    broker.set_x_container_sync_points(-1, -1)
+        try:
             broker.update_metadata(metadata)
+        except ContainerDeleted:
+            return HTTPNotFound(request=req)
         return HTTPNoContent(request=req)
 
     @public
