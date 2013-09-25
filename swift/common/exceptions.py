@@ -66,6 +66,22 @@ class DiskFileDeviceUnavailable(OnDiskDeviceUnavailable):
     pass
 
 
+class AccountDeleted(SwiftException):
+    pass
+
+
+class AccountConflict(SwiftException):
+    pass
+
+
+class ContainerDeleted(SwiftException):
+    pass
+
+
+class ContainerConflict(SwiftException):
+    pass
+
+
 class PathNotDir(OSError):
     pass
 

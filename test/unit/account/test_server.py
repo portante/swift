@@ -421,12 +421,16 @@ class TestAccountController(unittest.TestCase):
     def test_POST_after_DELETE_not_found(self):
         req = Request.blank('/sda1/p/a', environ={'REQUEST_METHOD': 'PUT',
                                                   'HTTP_X_TIMESTAMP': '0'})
-        req.get_response(self.controller)
+        resp = req.get_response(self.controller)
+        self.assertEquals(resp.status_int, 201)
         req = Request.blank('/sda1/p/a', environ={'REQUEST_METHOD': 'DELETE',
                                                   'HTTP_X_TIMESTAMP': '1'})
         resp = req.get_response(self.controller)
-        req = Request.blank('/sda1/p/a', environ={'REQUEST_METHOD': 'POST',
-                                                  'HTTP_X_TIMESTAMP': '2'})
+        self.assertEquals(resp.status_int, 204)
+        req = Request.blank(
+            '/sda1/p/a', environ={'REQUEST_METHOD': 'POST'},
+            headers={'X-Timestamp': normalize_timestamp(2),
+                     'X-Account-Meta-Test2': 'Value0'})
         resp = req.get_response(self.controller)
         self.assertEquals(resp.status_int, 404)
         self.assertEquals(resp.headers['X-Account-Status'], 'Deleted')
@@ -915,7 +919,8 @@ class TestAccountController(unittest.TestCase):
     def test_GET_accept_application_wildcard(self):
         req = Request.blank('/sda1/p/a', environ={'REQUEST_METHOD': 'PUT',
                                                   'HTTP_X_TIMESTAMP': '0'})
-        req.get_response(self.controller)
+        resp = req.get_response(self.controller)
+        self.assertEquals(resp.status_int, 201)
         req = Request.blank('/sda1/p/a/c1', environ={'REQUEST_METHOD': 'PUT'},
                             headers={'X-Put-Timestamp': '1',
                                      'X-Delete-Timestamp': '0',
@@ -923,6 +928,7 @@ class TestAccountController(unittest.TestCase):
                                      'X-Bytes-Used': '0',
                                      'X-Timestamp': normalize_timestamp(0)})
         resp = req.get_response(self.controller)
+        self.assertEquals(resp.status_int, 201)
         req = Request.blank('/sda1/p/a', environ={'REQUEST_METHOD': 'GET'})
         req.accept = 'application/*'
         resp = req.get_response(self.controller)
@@ -1319,7 +1325,7 @@ class TestAccountController(unittest.TestCase):
             self.assertEquals(resp.status_int, 204,
                               "%d on param %s" % (resp.status_int, param))
 
-    def test_put_auto_create(self):
+    def test_PUT_auto_create(self):
         headers = {'x-put-timestamp': normalize_timestamp(1),
                    'x-delete-timestamp': normalize_timestamp(0),
                    'x-object-count': '0',

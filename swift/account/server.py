@@ -22,10 +22,8 @@ from swift import gettext_ as _
 from eventlet import Timeout
 
 import swift.common.db
-from swift.account.backend import AccountBroker, AccountAPI, \
-    EntityAlreadyDeleted
+from swift.account.backend import AccountBroker, AccountAPI
 from swift.account.utils import account_listing_response
-from swift.common.db import DatabaseConnectionError, DatabaseAlreadyExists
 from swift.common.request_helpers import get_param, get_listing_content_type, \
     split_and_validate_path
 from swift.common.utils import get_logger, public, config_true_value, \
@@ -39,7 +37,8 @@ from swift.common.swob import HTTPAccepted, HTTPBadRequest, \
     HTTPMethodNotAllowed, HTTPNoContent, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPConflict, Request, \
     HTTPInsufficientStorage, HTTPException
-from swift.common.exceptions import OnDiskDeviceUnavailable
+from swift.common.exceptions import OnDiskDeviceUnavailable, AccountDeleted, \
+    AccountConflict
 
 DATADIR = 'accounts'
 
@@ -74,20 +73,6 @@ class AccountController(object):
             broker = None
         return broker
 
-    def _deleted_response(self, broker, req, resp, body=''):
-        # We are here since either the account does not exist or
-        # it exists but marked for deletion.
-        headers = {}
-        # Try to check if account exists and is marked for deletion
-        try:
-            if broker.is_status_deleted():
-                # Account does exist and is marked for deletion
-                headers = {'X-Account-Status': 'Deleted'}
-        except DatabaseConnectionError:
-            # Account does not exist!
-            pass
-        return resp(request=req, headers=headers, charset='utf-8', body=body)
-
     @public
     @timing_stats()
     def DELETE(self, req):
@@ -100,69 +85,74 @@ class AccountController(object):
         broker = self.get_account_api(drive, part, account)
         if not broker:
             return HTTPInsufficientStorage(drive=drive, request=req)
-        try:
-            broker.delete(req.headers['x-timestamp'])
-        except EntityAlreadyDeleted:
-            return self._deleted_response(broker, req, HTTPNotFound)
-        return self._deleted_response(broker, req, HTTPNoContent)
+        deleted, marked = broker.delete(req.headers['x-timestamp'])
+        if deleted:
+            resp = HTTPNoContent
+        else:
+            resp = HTTPNotFound
+        if marked:
+            # Account does exist and is marked for deletion
+            headers = {'X-Account-Status': 'Deleted'}
+        else:
+            headers = {}
+        return resp(request=req, headers=headers, charset='utf-8', body='')
 
     @public
     @timing_stats()
     def PUT(self, req):
         """Handle HTTP PUT request."""
         drive, part, account, container = split_and_validate_path(req, 3, 4)
-        if container:   # put account container
+        if container and 'x-trans-id' in req.headers:
+            # put account container
+            pending_timeout = 3
+        else:
             pending_timeout = None
-            if 'x-trans-id' in req.headers:
-                pending_timeout = 3
-            broker = self.get_account_api(drive, part, account,
-                                          pending_timeout=pending_timeout)
-            if not broker:
-                return HTTPInsufficientStorage(drive=drive, request=req)
-            if account.startswith(self.auto_create_account_prefix):
-                try:
-                    broker.initialize(normalize_timestamp(
-                        req.headers.get('x-timestamp') or time.time()))
-                except DatabaseAlreadyExists:
-                    pass
-            if req.headers.get('x-account-override-deleted', 'no').lower() != \
-                    'yes' and broker.is_deleted():
-                return HTTPNotFound(request=req)
-            broker.put_container(container, req.headers['x-put-timestamp'],
-                                 req.headers['x-delete-timestamp'],
-                                 req.headers['x-object-count'],
-                                 req.headers['x-bytes-used'])
-            if req.headers['x-delete-timestamp'] > \
-                    req.headers['x-put-timestamp']:
-                return HTTPNoContent(request=req)
-            else:
-                return HTTPCreated(request=req)
-        else:   # put account
-            broker = self.get_account_api(drive, part, account)
-            if not broker:
-                return HTTPInsufficientStorage(drive=drive, request=req)
-            timestamp = normalize_timestamp(req.headers['x-timestamp'])
+        broker = self.get_account_api(drive, part, account,
+                                      pending_timeout=pending_timeout)
+        if not broker:
+            return HTTPInsufficientStorage(drive=drive, request=req)
+        if container:
+            # put account container
+            timestamp = normalize_timestamp(
+                req.headers.get('x-timestamp') or time.time())
+            auto_create = account.startswith(self.auto_create_account_prefix)
+            override_deleted = req.headers.get(
+                'x-account-override-deleted', 'no').lower() == 'yes'
             try:
-                broker.initialize(timestamp)
-                created = True
-            except DatabaseAlreadyExists:
-                if broker.is_status_deleted():
-                    return self._deleted_response(broker, req, HTTPForbidden,
-                                                  body='Recently deleted')
-                created = broker.is_deleted()
-                broker.update_put_timestamp(timestamp)
-                if broker.is_deleted():
-                    return HTTPConflict(request=req)
+                ret = broker.put_container(
+                    container, timestamp, req.headers['x-put-timestamp'],
+                    req.headers['x-delete-timestamp'],
+                    req.headers['x-object-count'], req.headers['x-bytes-used'],
+                    auto_create, override_deleted)
+            except AccountDeleted:
+                resp = HTTPNotFound
+            else:
+                if ret:
+                    resp = HTTPCreated
+                else:
+                    resp = HTTPNoContent
+            return resp(request=req)
+        else:
+            # put account
+            timestamp = normalize_timestamp(req.headers['x-timestamp'])
             metadata = {}
             metadata.update((key, (value, timestamp))
                             for key, value in req.headers.iteritems()
                             if key.lower().startswith('x-account-meta-'))
-            if metadata:
-                broker.update_metadata(metadata)
-            if created:
-                return HTTPCreated(request=req)
+            try:
+                state = broker.create(timestamp, metadata)
+            except AccountDeleted:
+                headers = {'X-Account-Status': 'Deleted'}
+                resp = HTTPForbidden(request=req, headers=headers,
+                                     charset='utf-8', body='Recently deleted')
+            except AccountConflict:
+                resp = HTTPConflict(request=req)
             else:
-                return HTTPAccepted(request=req)
+                if state:
+                    resp = HTTPCreated(request=req)
+                else:
+                    resp = HTTPAccepted(request=req)
+            return resp
 
     @public
     @timing_stats()
@@ -175,9 +165,14 @@ class AccountController(object):
                                       stale_reads_ok=True)
         if not broker:
             return HTTPInsufficientStorage(drive=drive, request=req)
-        if broker.is_deleted():
-            return self._deleted_response(broker, req, HTTPNotFound)
-        info = broker.get_info()
+        try:
+            info = broker.get_info()
+        except AccountDeleted as err:
+            if err.marked:
+                headers = {'X-Account-Status': 'Deleted'}
+            else:
+                headers = {}
+            return HTTPNotFound(request=req, headers=headers, charset='utf-8')
         headers = {
             'X-Account-Container-Count': info['container_count'],
             'X-Account-Object-Count': info['object_count'],
@@ -186,7 +181,7 @@ class AccountController(object):
             'X-PUT-Timestamp': info['put_timestamp']}
         headers.update((key, value)
                        for key, (value, timestamp) in
-                       broker.metadata.iteritems() if value != '')
+                       info['metadata'].iteritems() if value != '')
         headers['Content-Type'] = out_content_type
         return HTTPNoContent(request=req, headers=headers, charset='utf-8')
 
@@ -217,8 +212,6 @@ class AccountController(object):
                                       stale_reads_ok=True)
         if not broker:
             return HTTPInsufficientStorage(drive=drive, request=req)
-        if broker.is_deleted():
-            return self._deleted_response(broker, req, HTTPNotFound)
         return account_listing_response(account, req, out_content_type, broker,
                                         limit, marker, end_marker, prefix,
                                         delimiter)
@@ -236,15 +229,23 @@ class AccountController(object):
         broker = self.get_account_api(drive, part, account)
         if not broker:
             return HTTPInsufficientStorage(drive=drive, request=req)
-        if broker.is_deleted():
-            return self._deleted_response(broker, req, HTTPNotFound)
         timestamp = normalize_timestamp(req.headers['x-timestamp'])
         metadata = {}
         metadata.update((key, (value, timestamp))
                         for key, value in req.headers.iteritems()
                         if key.lower().startswith('x-account-meta-'))
-        if metadata:
+        if not metadata:
+            return HTTPBadRequest(body='Missing or bad metadata',
+                                  request=req,
+                                  content_type='text/plain')
+        try:
             broker.update_metadata(metadata)
+        except AccountDeleted as err:
+            if err.marked:
+                headers = {'X-Account-Status': 'Deleted'}
+            else:
+                headers = {}
+            return HTTPNotFound(request=req, headers=headers, charset='utf-8')
         return HTTPNoContent(request=req)
 
     @public

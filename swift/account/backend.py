@@ -29,14 +29,11 @@ from swift.common.utils import lock_parent_directory
 from swift.common.ondisk import hash_path, normalize_timestamp, \
     storage_directory
 from swift.common.db import DatabaseBroker, DatabaseConnectionError, \
-    PENDING_CAP, PICKLE_PROTOCOL, utf8encode
-from swift.common.exceptions import OnDiskDeviceUnavailable
+    PENDING_CAP, PICKLE_PROTOCOL, utf8encode, DatabaseAlreadyExists
+from swift.common.exceptions import OnDiskDeviceUnavailable, AccountDeleted, \
+    AccountConflict
 
 DATADIR = 'accounts'
-
-
-class EntityAlreadyDeleted(Exception):
-    pass
 
 
 class AccountBroker(DatabaseBroker):
@@ -165,17 +162,6 @@ class AccountBroker(DatabaseBroker):
                 status = 'DELETED',
                 status_changed_at = ?
             WHERE delete_timestamp < ? """, (timestamp, timestamp, timestamp))
-
-    def delete(self, timestamp):
-        """
-        Mark the entity as deleted
-
-        :param timestamp: delete timestamp
-        :raises EntityAlreadyDeleted: the entity is already deleted
-        """
-        if self.is_deleted():
-            raise EntityAlreadyDeleted()
-        self.delete_db(timestamp)
 
     def _commit_puts_load(self, item_list, entry):
         """See :func:`swift.common.db.DatabaseBroker._commit_puts_load`"""
@@ -447,8 +433,7 @@ class AccountAPI(AccountBroker):
     :param device: Device name
     :param partition: Partition number as a string
     :param acct: Account name, decoded from URL
-
-    :param logger: Keyword argument; means the logger to use
+    :param kwargs: various keyword arguments
     """
 
     def __init__(self, devices, device, partition, acct, **kwargs):
@@ -461,4 +446,133 @@ class AccountAPI(AccountBroker):
         db_path = os.path.join(dir_path, hsh + '.db')
         # So this is why you can take super(Foo) in a Bar.__init__()!
         # Guido foresaw everything.
-        super(AccountBroker, self).__init__(db_path, **kwargs)
+        super(AccountAPI, self).__init__(db_path, **kwargs)
+
+    def _is_status_deleted(self):
+        """
+        Check if a database status is "deleted".
+
+        :returns: True if database exists and its status is "deleted",
+                  False otherwise.
+        """
+        try:
+            res = self.is_status_deleted()
+        except DatabaseConnectionError:
+            # Account does not exist!
+            res = False
+        return res
+
+    def delete(self, timestamp):
+        """
+        Mark the entity as deleted
+
+        :param timestamp: delete timestamp
+        :returns: Boolean tuple: first boolean indicates whether or not a
+                  delete operation took place, second boolean indicates
+                  whether or not a database still exists but marked deleted.
+        """
+        if self.is_deleted():
+            deleted = False
+        else:
+            self.delete_db(timestamp)
+            deleted = True
+        marked_deleted = self._is_status_deleted()
+        return (deleted, marked_deleted)
+
+    def put_container(self, container, timestamp, put_timestamp,
+                      delete_timestamp, object_count, bytes_used,
+                      auto_create=False, override_deleted=False):
+        """
+        Put a container into an account, along with its two timestamps, count
+        of objects and total bytes used. Optionally, the caller can specify
+        the account auto created if it does not exist, and optionally specify
+        that an account marked for deletion can be undeleted by adding the
+        specified container.
+
+        :param container: name of the container to create
+        :param timestamp: timestamp an auto-created account will have
+        :param put_timestamp: put_timestamp of the container to create
+        :param delete_timestamp: delete_timestamp of the container to create
+        :param object_count: number of objects in the container
+        :param bytes_used: number of bytes used by the container
+        :param auto_create: optionally automatically create the account if it
+                            previously did not exist
+        :param override_deleted: optionally restore a previously deleted
+                                 account by adding the specified container
+        :returns: False if the container was added with a delete timestamp
+                  greater than a put timestamp, True otherwise
+        :raises: AccountDeleted if account was marked deleted and
+                 override_deleted was False
+        """
+        if auto_create:
+            try:
+                self.initialize(timestamp)
+            except DatabaseAlreadyExists:
+                pass
+        if not override_deleted and self.is_deleted():
+            marked_deleted = self._is_status_deleted()
+            ad = AccountDeleted()
+            ad.marked = marked_deleted
+            raise ad
+        super(AccountAPI, self).put_container(
+            container, put_timestamp, delete_timestamp, object_count,
+            bytes_used)
+        return False if delete_timestamp > put_timestamp else True
+
+    def create(self, timestamp, metadata):
+        """
+        Create the target account with the given timestamp and associated
+        metadata.
+
+        :params timestamp: timestamp to use for creation
+        :params metadata: dictionary of metadata to associate with the account
+        :returns: True if a new account was created, False otherwise
+        :raises: AccountDeleted if that condition is encountered while being
+                 created
+        :raises: AccountConflict if a race occurs with another operation
+                 deleting the account
+        """
+        try:
+            self.initialize(timestamp)
+            created = True
+        except DatabaseAlreadyExists:
+            marked_deleted = self._is_status_deleted()
+            if marked_deleted:
+                ad = AccountDeleted()
+                ad.marked = True
+                raise ad
+            created = self.is_deleted()
+            self.update_put_timestamp(timestamp)
+            if self.is_deleted():
+                raise AccountConflict()
+        if metadata:
+            self.update_metadata(metadata)
+        return created
+
+    def get_info(self):
+        """
+        :returns: accounts metadata as a dictionary if it exists
+        :raises: AccountDeleted if that condition is encountered
+        """
+        if self.is_deleted():
+            ad = AccountDeleted()
+            ad.marked = self._is_status_deleted()
+            raise ad
+        info = super(AccountAPI, self).get_info()
+        info['metadata'] = self.metadata
+        return info
+
+    def update_metadata(self, metadata):
+        """
+        :params timestamp: timestamp to use for this update
+        :params metadata: dictionary of metadata to associate with the account
+        :raises: AccountDeleted if that condition is encountered while being
+                 created
+        """
+        if not metadata:
+            return
+        if self.is_deleted():
+            ad = AccountDeleted()
+            ad.marked = self._is_status_deleted()
+            raise ad
+        super(AccountAPI, self).update_metadata(metadata)

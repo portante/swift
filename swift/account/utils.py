@@ -16,9 +16,10 @@
 import time
 from xml.sax import saxutils
 
-from swift.common.swob import HTTPOk, HTTPNoContent
+from swift.common.swob import HTTPOk, HTTPNoContent, HTTPNotFound
 from swift.common.utils import json
 from swift.common.ondisk import normalize_timestamp
+from swift.common.exceptions import AccountDeleted
 
 
 class FakeAccountBroker(object):
@@ -32,14 +33,11 @@ class FakeAccountBroker(object):
                 'object_count': 0,
                 'bytes_used': 0,
                 'created_at': now,
-                'put_timestamp': now}
+                'put_timestamp': now,
+                'metadata': {}}
 
     def list_containers_iter(self, *_, **__):
         return []
-
-    @property
-    def metadata(self):
-        return {}
 
 
 def account_listing_response(account, req, response_content_type, broker=None,
@@ -48,7 +46,14 @@ def account_listing_response(account, req, response_content_type, broker=None,
     if broker is None:
         broker = FakeAccountBroker()
 
-    info = broker.get_info()
+    try:
+        info = broker.get_info()
+    except AccountDeleted as err:
+        if err.marked:
+            headers = {'X-Account-Status': 'Deleted'}
+        else:
+            headers = {}
+        return HTTPNotFound(request=req, headers=headers, charset='utf-8')
     resp_headers = {
         'X-Account-Container-Count': info['container_count'],
         'X-Account-Object-Count': info['object_count'],
@@ -57,7 +62,7 @@ def account_listing_response(account, req, response_content_type, broker=None,
         'X-PUT-Timestamp': info['put_timestamp']}
     resp_headers.update((key, value)
                         for key, (value, timestamp) in
-                        broker.metadata.iteritems() if value != '')
+                        info['metadata'].iteritems() if value != '')
 
     account_list = broker.list_containers_iter(limit, marker, end_marker,
                                                prefix, delimiter)
