@@ -57,7 +57,7 @@ Web Front End Options
 ---------------------
 
 Swift comes with an integral web front end. However, it can also be deployed
-as a request processor of an Apache2 using mod_wsgi as described in 
+as a request processor of an Apache2 using mod_wsgi as described in
 :doc:`Apache Deployment Guide <apache_deployment_guide>`.
 
 .. _ring-preparing:
@@ -440,7 +440,7 @@ log_name               container-auditor  Label used when logging
 log_facility           LOG_LOCAL0         Syslog log facility
 log_level              INFO               Logging level
 interval               1800               Minimum time for a pass to take
-containers_per_second  200                Maximum containers audited per second. 
+containers_per_second  200                Maximum containers audited per second.
                                           Should be tuned according to individual
                                           system specs. 0 is unlimited.
 =====================  =================  =======================================
@@ -527,9 +527,9 @@ log_name              account-auditor  Label used when logging
 log_facility          LOG_LOCAL0       Syslog log facility
 log_level             INFO             Logging level
 interval              1800             Minimum time for a pass to take
-accounts_per_second   200              Maximum accounts audited per second. 
+accounts_per_second   200              Maximum accounts audited per second.
                                        Should be tuned according to individual
-                                       system specs. 0 is unlimited. 
+                                       system specs. 0 is unlimited.
 ====================  ===============  =======================================
 
 [account-reaper]
@@ -580,9 +580,9 @@ key_file                                       Path to the ssl .key. This
                                                should be enabled for testing
                                                purposes only.
 cors_allow_origin                              This is a list of hosts that
-                                               are included with any CORS 
-                                               request by default and 
-                                               returned with the 
+                                               are included with any CORS
+                                               request by default and
+                                               returned with the
                                                Access-Control-Allow-Origin
                                                header in addition to what
                                                the container has set.
@@ -622,6 +622,9 @@ client_chunk_size             65536            Chunk size to read from
                                                clients
 memcache_servers              127.0.0.1:11211  Comma separated list of
                                                memcached servers ip:port
+memcache_max_connections      2                Max number of connections to
+                                               each memcached server per
+                                               worker
 node_timeout                  10               Request timeout to external
                                                services
 client_timeout                60               Timeout to read one chunk
