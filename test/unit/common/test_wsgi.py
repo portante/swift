@@ -247,10 +247,12 @@ class TestWSGI(unittest.TestCase):
                     socket.SO_KEEPALIVE: 1,
                 },
             }
+            expected_socket_opts[socket.IPPROTO_TCP] = {
+                socket.TCP_NODELAY: 1,
+            }
             if hasattr(socket, 'TCP_KEEPIDLE'):
-                expected_socket_opts[socket.IPPROTO_TCP] = {
-                    socket.TCP_KEEPIDLE: 600,
-                }
+                expected_socket_opts[socket.IPPROTO_TCP][
+                    socket.TCP_KEEPIDLE] = 600
             self.assertEquals(sock.opts, expected_socket_opts)
             # test ssl
             sock = wsgi.get_socket(ssl_conf)
