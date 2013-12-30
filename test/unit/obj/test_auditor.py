@@ -21,12 +21,17 @@ import time
 from shutil import rmtree
 from hashlib import md5
 from tempfile import mkdtemp
-from test.unit import FakeLogger
+from test.unit import FakeLogger, patch_policies
 from swift.obj import auditor
 from swift.obj.diskfile import DiskFile, write_metadata, invalidate_hash, \
     get_data_dir, DiskFileManager, AuditLocation
 from swift.common.utils import hash_path, mkdirs, normalize_timestamp, \
     storage_directory
+from swift.common.storage_policy import StoragePolicy
+
+
+_mocked_policies = [StoragePolicy(0, 'zero', False),
+                    StoragePolicy(1, 'one', True)]
 
 
 class TestAuditor(unittest.TestCase):
@@ -59,6 +64,7 @@ class TestAuditor(unittest.TestCase):
         rmtree(os.path.dirname(self.testdir), ignore_errors=1)
         unit.xattr_data = {}
 
+    @patch_policies(_mocked_policies)
     def test_object_audit_extra_data(self):
         auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
         data = '0' * 1024
@@ -85,6 +91,7 @@ class TestAuditor(unittest.TestCase):
                 AuditLocation(self.disk_file._datadir, 'sda', '0'))
             self.assertEquals(auditor_worker.quarantines, pre_quarantines + 1)
 
+    @patch_policies(_mocked_policies)
     def test_object_audit_diff_data(self):
         auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
         data = '0' * 1024
@@ -121,6 +128,7 @@ class TestAuditor(unittest.TestCase):
             AuditLocation(self.disk_file._datadir, 'sda', '0'))
         self.assertEquals(auditor_worker.quarantines, pre_quarantines + 1)
 
+    @patch_policies(_mocked_policies)
     def test_object_audit_no_meta(self):
         timestamp = str(normalize_timestamp(time.time()))
         path = os.path.join(self.disk_file._datadir, timestamp + '.data')
@@ -135,6 +143,7 @@ class TestAuditor(unittest.TestCase):
             AuditLocation(self.disk_file._datadir, 'sda', '0'))
         self.assertEquals(auditor_worker.quarantines, pre_quarantines + 1)
 
+    @patch_policies(_mocked_policies)
     def test_object_audit_will_not_swallow_errors_in_tests(self):
         timestamp = str(normalize_timestamp(time.time()))
         path = os.path.join(self.disk_file._datadir, timestamp + '.data')
@@ -150,6 +159,7 @@ class TestAuditor(unittest.TestCase):
             self.assertRaises(NameError, auditor_worker.object_audit,
                               AuditLocation(os.path.dirname(path), 'sda', '0'))
 
+    @patch_policies(_mocked_policies)
     def test_failsafe_object_audit_will_swallow_errors_in_tests(self):
         timestamp = str(normalize_timestamp(time.time()))
         path = os.path.join(self.disk_file._datadir, timestamp + '.data')
@@ -166,6 +176,7 @@ class TestAuditor(unittest.TestCase):
                 AuditLocation(os.path.dirname(path), 'sda', '0'))
         self.assertEquals(auditor_worker.errors, 1)
 
+    @patch_policies(_mocked_policies)
     def test_generic_exception_handling(self):
         auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
         timestamp = str(normalize_timestamp(time.time()))
@@ -187,6 +198,7 @@ class TestAuditor(unittest.TestCase):
             auditor_worker.audit_all_objects()
         self.assertEquals(auditor_worker.errors, pre_errors + 1)
 
+    @patch_policies(_mocked_policies)
     def test_object_run_once_pass(self):
         auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
         auditor_worker.log_time = 0
@@ -209,6 +221,7 @@ class TestAuditor(unittest.TestCase):
         self.assertEquals(auditor_worker.stats_buckets[1024], 1)
         self.assertEquals(auditor_worker.stats_buckets[10240], 0)
 
+    @patch_policies(_mocked_policies)
     def test_object_run_once_no_sda(self):
         auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
         timestamp = str(normalize_timestamp(time.time()))
@@ -229,6 +242,7 @@ class TestAuditor(unittest.TestCase):
         auditor_worker.audit_all_objects()
         self.assertEquals(auditor_worker.quarantines, pre_quarantines + 1)
 
+    @patch_policies(_mocked_policies)
     def test_object_run_once_multi_devices(self):
         auditor_worker = auditor.AuditorWorker(self.conf, self.logger)
         timestamp = str(normalize_timestamp(time.time()))

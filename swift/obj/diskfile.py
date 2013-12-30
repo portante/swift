@@ -538,8 +538,7 @@ class DiskFileManager(object):
                         partition, account, container, obj,
                         policy_idx=policy_idx, **kwargs)
 
-    # XXX remove the default of 0 once the auditor has been made policy aware
-    def object_audit_location_generator(self, policy_idx=0):
+    def object_audit_location_generator(self, policy_idx):
         return object_audit_location_generator(self.devices, policy_idx,
                                                self.mount_check, self.logger)
 

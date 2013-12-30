@@ -710,7 +710,7 @@ class TestDiskFileManager(unittest.TestCase):
         self.df_mgr.logger.increment.assert_called_with('async_pendings')
 
     def test_object_audit_location_generator(self):
-        locations = list(self.df_mgr.object_audit_location_generator())
+        locations = list(self.df_mgr.object_audit_location_generator(0))
         self.assertEqual(locations, [])
 
     def test_get_hashes_bad_dev(self):

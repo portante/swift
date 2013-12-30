@@ -24,6 +24,7 @@ from swift.common.utils import get_logger, ratelimit_sleep, dump_recon_cache, \
     list_from_csv, json
 from swift.common.exceptions import DiskFileQuarantined, DiskFileNotExist
 from swift.common.daemon import Daemon
+from swift.common.storage_policy import POLICIES
 
 SLEEP_BETWEEN_AUDITS = 30
 
@@ -70,48 +71,51 @@ class AuditorWorker(object):
         total_quarantines = 0
         total_errors = 0
         time_auditing = 0
-        all_locs = self.diskfile_mgr.object_audit_location_generator()
-        for location in all_locs:
-            loop_time = time.time()
-            self.failsafe_object_audit(location)
-            self.logger.timing_since('timing', loop_time)
-            self.files_running_time = ratelimit_sleep(
-                self.files_running_time, self.max_files_per_second)
-            self.total_files_processed += 1
-            now = time.time()
-            if now - reported >= self.log_time:
-                self.logger.info(_(
-                    'Object audit (%(type)s). '
-                    'Since %(start_time)s: Locally: %(passes)d passed, '
-                    '%(quars)d quarantined, %(errors)d errors '
-                    'files/sec: %(frate).2f , bytes/sec: %(brate).2f, '
-                    'Total time: %(total).2f, Auditing time: %(audit).2f, '
-                    'Rate: %(audit_rate).2f') % {
-                        'type': self.auditor_type,
-                        'start_time': time.ctime(reported),
-                        'passes': self.passes, 'quars': self.quarantines,
-                        'errors': self.errors,
-                        'frate': self.passes / (now - reported),
-                        'brate': self.bytes_processed / (now - reported),
-                        'total': (now - begin), 'audit': time_auditing,
-                        'audit_rate': time_auditing / (now - begin)})
-                dump_recon_cache({'object_auditor_stats_%s' %
-                                  self.auditor_type: {
-                                      'errors': self.errors,
-                                      'passes': self.passes,
-                                      'quarantined': self.quarantines,
-                                      'bytes_processed': self.bytes_processed,
-                                      'start_time': reported,
-                                      'audit_time': time_auditing}},
-                                 self.rcache, self.logger)
-                reported = now
-                total_quarantines += self.quarantines
-                total_errors += self.errors
-                self.passes = 0
-                self.quarantines = 0
-                self.errors = 0
-                self.bytes_processed = 0
-            time_auditing += (now - loop_time)
+        for policy in POLICIES:
+            all_locs = \
+                self.diskfile_mgr.object_audit_location_generator(policy.idx)
+            for location in all_locs:
+                loop_time = time.time()
+                self.failsafe_object_audit(location)
+                self.logger.timing_since('timing', loop_time)
+                self.files_running_time = ratelimit_sleep(
+                    self.files_running_time, self.max_files_per_second)
+                self.total_files_processed += 1
+                now = time.time()
+                if now - reported >= self.log_time:
+                    self.logger.info(_(
+                        'Object audit (%(type)s). '
+                        'Since %(start_time)s: Locally: %(passes)d passed, '
+                        '%(quars)d quarantined, %(errors)d errors '
+                        'files/sec: %(frate).2f , bytes/sec: %(brate).2f, '
+                        'Total time: %(total).2f, Auditing time: %(audit).2f, '
+                        'Rate: %(audit_rate).2f') % {
+                            'type': self.auditor_type,
+                            'start_time': time.ctime(reported),
+                            'passes': self.passes, 'quars': self.quarantines,
+                            'errors': self.errors,
+                            'frate': self.passes / (now - reported),
+                            'brate': self.bytes_processed / (now - reported),
+                            'total': (now - begin), 'audit': time_auditing,
+                            'audit_rate': time_auditing / (now - begin)})
+                    dump_recon_cache({'object_auditor_stats_%s' %
+                                      self.auditor_type: {
+                                          'errors': self.errors,
+                                          'passes': self.passes,
+                                          'quarantined': self.quarantines,
+                                          'bytes_processed':
+                                          self.bytes_processed,
+                                          'start_time': reported,
+                                          'audit_time': time_auditing}},
+                                     self.rcache, self.logger)
+                    reported = now
+                    total_quarantines += self.quarantines
+                    total_errors += self.errors
+                    self.passes = 0
+                    self.quarantines = 0
+                    self.errors = 0
+                    self.bytes_processed = 0
+                time_auditing += (now - loop_time)
         # Avoid divide by zero during very short runs
         elapsed = (time.time() - begin) or 0.000001
         self.logger.info(_(
