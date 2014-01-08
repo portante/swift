@@ -463,7 +463,7 @@ class DiskFileManager(object):
 
     def get_diskfile_from_audit_location(self, audit_location):
         dev_path = self.get_dev_path(audit_location.device, mount_check=False)
-        return DiskFile.from_hash_dir(
+        return DiskFile._from_hash_dir(
             self, audit_location.path, dev_path,
             audit_location.partition)
 
@@ -941,7 +941,7 @@ class DiskFile(object):
         return self._metadata.get('X-Timestamp')
 
     @classmethod
-    def from_hash_dir(cls, mgr, hash_dir_path, device_path, partition):
+    def _from_hash_dir(cls, mgr, hash_dir_path, device_path, partition):
         return cls(mgr, device_path, None, partition, _datadir=hash_dir_path)
 
     def open(self):
