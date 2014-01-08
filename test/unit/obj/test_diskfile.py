@@ -1884,7 +1884,7 @@ class TestDiskFile(unittest.TestCase):
                   '9373a92d072897b136b3fc06595b7456', fresher_ts)])
 
     def test_diskfile_names(self):
-        df = self._simple_get_diskfile()
+        df = self._get_open_disk_file()
         self.assertEqual(df.account, 'a')
         self.assertEqual(df.container, 'c')
         self.assertEqual(df.obj, 'o')

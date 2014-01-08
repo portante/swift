@@ -220,15 +220,18 @@ class Sender(object):
                     self.job['device'], self.job['partition'], object_hash)
             except exceptions.DiskFileNotExist:
                 continue
-            url_path = urllib.quote(
-                '/%s/%s/%s' % (df.account, df.container, df.obj))
             try:
                 df.open()
             except exceptions.DiskFileDeleted as err:
-                self.send_delete(url_path, err.timestamp)
+                name = err.metadata.get('name')
+                if name:
+                    url_path = urllib.quote(name)
+                    self.send_delete(url_path, err.timestamp)
             except exceptions.DiskFileError:
                 pass
             else:
+                url_path = urllib.quote(
+                    '/%s/%s/%s' % (df.account, df.container, df.obj))
                 self.send_put(url_path, df)
         with exceptions.MessageTimeout(
                 self.daemon.node_timeout, 'updates end'):

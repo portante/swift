@@ -888,61 +888,78 @@ class DiskFile(object):
         self._logger = mgr.logger
         self._disk_chunk_size = mgr.disk_chunk_size
         self._bytes_per_sync = mgr.bytes_per_sync
+        self._account = account
+        self._container = container
+        self._obj = obj
         if account and container and obj:
             self._name = '/' + '/'.join((account, container, obj))
-            self._account = account
-            self._container = container
-            self._obj = obj
             name_hash = hash_path(account, container, obj)
             self._datadir = join(
                 device_path, storage_directory(DATADIR, partition, name_hash))
         else:
-            # gets populated when we read the metadata
+            # Populated on .open()
             self._name = None
-            self._account = None
-            self._container = None
-            self._obj = None
-            self._datadir = None
+            self._datadir = _datadir
         self._tmpdir = join(device_path, 'tmp')
         self._metadata = None
         self._data_file = None
         self._fp = None
         self._quarantined_dir = None
         self._content_length = None
-        if _datadir:
-            self._datadir = _datadir
-        else:
-            name_hash = hash_path(account, container, obj)
-            self._datadir = join(
-                device_path, storage_directory(DATADIR, partition, name_hash))
+
+    @classmethod
+    def _from_hash_dir(cls, mgr, hash_dir_path, device_path, partition):
+        return cls(mgr, device_path, None, partition, _datadir=hash_dir_path)
 
     @property
     def account(self):
+        """
+        Object's "account" name component, provided only after it has been
+        opened (see :func:`swift.obj.diskfile.DiskFile.open`)
+        """
+        if self._metadata is None:
+            raise DiskFileNotOpen()
         return self._account
 
     @property
     def container(self):
+        """
+        Object's "container" name component, provided only after it has been
+        opened (see :func:`swift.obj.diskfile.DiskFile.open`).
+        """
+        if self._metadata is None:
+            raise DiskFileNotOpen()
         return self._container
 
     @property
     def obj(self):
+        """
+        Object's "object" name component, provided only after it has been
+        opened (see :func:`swift.obj.diskfile.DiskFile.open`).
+        """
+        if self._metadata is None:
+            raise DiskFileNotOpen()
         return self._obj
 
     @property
     def content_length(self):
+        """
+        Size (or content length) of this object in bytes, provided only after
+        it has been opened (see :func:`swift.obj.diskfile.DiskFile.open`).
+        """
         if self._metadata is None:
             raise DiskFileNotOpen()
         return self._content_length
 
     @property
     def timestamp(self):
+        """
+        Object creation timestamp of this object, provided only after it has
+        been opened (see :func:`swift.obj.diskfile.DiskFile.open`).
+        """
         if self._metadata is None:
             raise DiskFileNotOpen()
         return self._metadata.get('X-Timestamp')
-
-    @classmethod
-    def _from_hash_dir(cls, mgr, hash_dir_path, device_path, partition):
-        return cls(mgr, device_path, None, partition, _datadir=hash_dir_path)
 
     def open(self):
         """
@@ -1100,21 +1117,31 @@ class DiskFile(object):
             try:
                 metadata = self._failsafe_read_metadata(ts_file, ts_file)
             except DiskFileQuarantined:
-                # If the tombstone's corrupted, quarantine it and pretend it
-                # wasn't there
+                # The tombstone was corrupted, and it was quarantined, so
+                # pretend it wasn't there
                 exc = DiskFileNotExist()
             else:
                 # All well and good that we have found a tombstone file, but
                 # we don't have a data file so we are just going to raise an
                 # exception that we could not find the object, providing the
                 # tombstone's timestamp.
-                exc = DiskFileDeleted(metadata=metadata)
+                name = metadata.get('name')
+                if not self._name_matches_hash(name):
+                    # The tombstone is corrupted, quarantine it and pretend it
+                    # wasn't there
+                    self._quarantine(ts_file, "bad name in metadata")
+                    exc = DiskFileNotExist()
+                else:
+                    exc = DiskFileDeleted(metadata=metadata)
         return exc
 
-    def _verify_name_matches_hash(self, data_file):
+    def _name_matches_hash(self, name):
         hash_from_fs = os.path.basename(self._datadir)
-        hash_from_name = hash_path(self._name.lstrip('/'))
-        if hash_from_fs != hash_from_name:
+        hash_from_name = hash_path(name.lstrip('/'))
+        return hash_from_fs == hash_from_name
+
+    def _verify_name_matches_hash(self, data_file):
+        if not self._name_matches_hash(self._name):
             raise self._quarantine(
                 data_file,
                 "Hash of name in metadata does not match directory name")
@@ -1225,6 +1252,8 @@ class DiskFile(object):
             # to us
             self._name = self._metadata['name']
             self._verify_name_matches_hash(data_file)
+            a, c, o = self._name.split('/', 3)[1:]
+            self._account, self._container, self._obj = a, c, o
         self._verify_data_file(data_file, fp)
         return fp
 
