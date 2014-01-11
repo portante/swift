@@ -24,8 +24,17 @@ from swift.common.constraints import MAX_META_COUNT, MAX_META_NAME_LENGTH, \
 from swift.common.middleware.acl import format_acl
 from test.functional.swift_test_client import Connection
 from test import get_config
-from swift_testing import check_response, retry, skip, web_front_end
+from swift_testing import check_response, retry, skip, web_front_end, \
+    do_setup
+import test.functional
 import swift_testing
+
+
+def setup():
+    if not test.functional.in_process:
+        # Short circuit, we are using an external Swift server setup
+        return
+    do_setup(test.functional.in_process_conf)
 
 
 class TestAccount(unittest.TestCase):

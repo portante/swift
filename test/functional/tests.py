@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from datetime import datetime
 import hashlib
 import hmac
@@ -28,30 +29,62 @@ import urllib
 import uuid
 from nose import SkipTest
 
+from swift.common import utils
+use_in_process = utils.config_true_value(os.environ.get(
+    'SWIFT_TEST_IN_PROCESS', 'False'))
+if use_in_process:
+    # If the user is requesting that functional tests run in-process, which
+    # assumes the built-in configuration required for running them properly,
+    # ensure nobody attempts to read an existing conf file
+    utils.SWIFT_CONF_FILE = '/dev/null'
+
 from test import get_config
+import test.functional
 from test.functional.swift_test_client import Account, Connection, File, \
     ResponseError
 from swift.common import constraints
 
 
-config = get_config('func_test')
-for k in constraints.DEFAULT_CONSTRAINTS:
-    if k in config:
-        # prefer what's in test.conf
-        config[k] = int(config[k])
-    elif constraints.SWIFT_CONSTRAINTS_LOADED:
-        # swift.conf exists, so use what's defined there (or swift defaults)
-        # This normally happens when the test is running locally to the cluster
-        # as in a SAIO.
-        config[k] = constraints.EFFECTIVE_CONSTRAINTS[k]
-    else:
-        # .functests don't know what the constraints of the tested cluster are,
-        # so the tests can't reliably pass or fail. Therefore, skip those
-        # tests.
-        config[k] = '%s constraint is not defined' % k
+in_process_constraints = dict(constraints.DEFAULT_CONSTRAINTS)
+in_process_constraints['max_file_size'] = 10 * 1024 * 1024
+
+if use_in_process:
+    config = in_process_constraints
+    test.functional.in_process = True
+else:
+    config = get_config('func_test')
+    test.functional.in_process = True
+    for k in constraints.DEFAULT_CONSTRAINTS:
+        if k in config:
+            # prefer what's in test.conf
+            config[k] = int(config[k])
+            test.functional.in_process = False
+        elif constraints.SWIFT_CONSTRAINTS_LOADED:
+            # swift.conf exists, so use what's defined there (or swift
+            # defaults) This normally happens when the test is running locally
+            # to the cluster as in a SAIO.
+            config[k] = constraints.EFFECTIVE_CONSTRAINTS[k]
+            test.functional.in_process = False
+        else:
+            # .functests don't know what the constraints of the tested cluster
+            # are, so the tests can't reliably pass or fail. Therefore, skip
+            # those tests.
+            #config[k] = '%s constraint is not defined' % k
+
+            # FIXME: For now, use this situation to determine that we are
+            # going to run the functional tests in-process, loading the
+            # appropriate in-process test run constraints set
+            config[k] = in_process_constraints[k]
 
 web_front_end = config.get('web_front_end', 'integral')
 normalized_urls = config.get('normalized_urls', False)
+
+
+def setup():
+    if not test.functional.in_process:
+        # Short circuit, we are using an external Swift server setup
+        return
+    config.update(test.functional.in_process_conf)
 
 
 def load_constraint(name):

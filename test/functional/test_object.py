@@ -19,9 +19,17 @@ import unittest
 from nose import SkipTest
 from uuid import uuid4
 
+import test.functional
 from swift_testing import check_response, retry, skip, skip3, \
-    swift_test_perm, web_front_end
+    swift_test_perm, web_front_end, do_setup
 from swift.common.utils import json
+
+
+def setup():
+    if not test.functional.in_process:
+        # Short circuit, we are using an external Swift server setup
+        return
+    do_setup(test.functional.in_process_conf)
 
 
 class TestObject(unittest.TestCase):

@@ -29,13 +29,22 @@ web_front_end = conf.get('web_front_end', 'integral')
 normalized_urls = conf.get('normalized_urls', False)
 
 # If no conf was read, we will fall back to old school env vars
+swift_test_auth_version = '1'
 swift_test_auth = os.environ.get('SWIFT_TEST_AUTH')
 swift_test_user = [os.environ.get('SWIFT_TEST_USER'), None, None]
 swift_test_key = [os.environ.get('SWIFT_TEST_KEY'), None, None]
 swift_test_tenant = ['', '', '']
 swift_test_perm = ['', '', '']
 
-if conf:
+
+def do_setup(conf):
+    global swift_test_auth_version
+    global swift_test_auth
+    global swift_test_user
+    global swift_test_key
+    global swift_test_tenant
+    global swift_test_perm
+
     swift_test_auth_version = str(conf.get('auth_version', '1'))
 
     swift_test_auth = 'http'
@@ -62,13 +71,13 @@ if conf:
                 '%s:' % conf['account2'] if 'account2' in conf else '',
                 conf['username2'])
             swift_test_key[1] = conf['password2']
-        except KeyError as err:
+        except KeyError:
             pass  # old conf, no second account tests can be run
         try:
             swift_test_user[2] = '%s%s' % ('%s:' % conf['account'] if 'account'
                                            in conf else '', conf['username3'])
             swift_test_key[2] = conf['password3']
-        except KeyError as err:
+        except KeyError:
             pass  # old conf, no third account tests can be run
 
         for _ in range(3):
@@ -89,19 +98,46 @@ if conf:
             swift_test_perm[_] = swift_test_tenant[_] + ':' \
                 + swift_test_user[_]
 
+
+if conf:
+    do_setup(conf)
+
+use_in_process = False
 skip = not all([swift_test_auth, swift_test_user[0], swift_test_key[0]])
 if skip:
-    print >>sys.stderr, 'SKIPPING FUNCTIONAL TESTS DUE TO NO CONFIG'
+    if conf:
+        print >>sys.stderr, 'SKIPPING FUNCTIONAL TESTS DUE TO NO CONFIG'
+    else:
+        # setup defaults for in-process
+        use_in_process = True
 
 skip2 = not all([not skip, swift_test_user[1], swift_test_key[1]])
 if not skip and skip2:
-    print >>sys.stderr, \
-        'SKIPPING SECOND ACCOUNT FUNCTIONAL TESTS DUE TO NO CONFIG FOR THEM'
+    if conf:
+        print >>sys.stderr, (
+            'SKIPPING SECOND ACCOUNT FUNCTIONAL TESTS'
+            ' DUE TO NO CONFIG FOR THEM')
+    else:
+        # setup defaults for in-process
+        use_in_process = True
 
 skip3 = not all([not skip, swift_test_user[2], swift_test_key[2]])
 if not skip and skip3:
-    print >>sys.stderr, \
-        'SKIPPING THIRD ACCOUNT FUNCTIONAL TESTS DUE TO NO CONFIG FOR THEM'
+    if conf:
+        print >>sys.stderr, (
+            'SKIPPING THIRD ACCOUNT FUNCTIONAL TESTS'
+            ' DUE TO NO CONFIG FOR THEM')
+    else:
+        # setup defaults for in-process
+        use_in_process = True
+
+
+if use_in_process:
+    # If we decided to use the in-process functional test configuration, since
+    # we were skippings tests due to a lack of any configuration file, then
+    # don't skip anything, do_setup() will be called again above with a
+    # in-process config dictionary.
+    skip = skip2 = skip3 = False
 
 
 class AuthError(Exception):
