@@ -19,9 +19,10 @@ import unittest
 from nose import SkipTest
 from uuid import uuid4
 
-from swift_testing import check_response, retry, skip, skip3, \
-    swift_test_perm, web_front_end
 from swift.common.utils import json
+
+from test.functional import check_response, retry, skip, skip3, \
+    swift_test_perm, web_front_end
 
 
 class TestObject(unittest.TestCase):

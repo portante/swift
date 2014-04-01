@@ -22,10 +22,11 @@ from nose import SkipTest
 from swift.common.constraints import MAX_META_COUNT, MAX_META_NAME_LENGTH, \
     MAX_META_OVERALL_SIZE, MAX_META_VALUE_LENGTH
 from swift.common.middleware.acl import format_acl
-from test.functional.swift_test_client import Connection
+
 from test import get_config
-from swift_testing import check_response, retry, skip, web_front_end
-import swift_testing
+from test import functional
+from test.functional import check_response, retry, skip, web_front_end
+from test.functional.swift_test_client import Connection
 
 
 class TestAccount(unittest.TestCase):
@@ -131,7 +132,7 @@ class TestAccount(unittest.TestCase):
 
             # User1 is swift_owner of their own account, so they can POST an
             # ACL -- let's do this and make User2 (test_user[1]) an admin
-            acl_user = swift_testing.swift_test_user[1]
+            acl_user = functional.swift_test_user[1]
             acl = {'admin': [acl_user]}
             headers = {'x-account-access-control': format_acl(
                 version=2, acl_dict=acl)}

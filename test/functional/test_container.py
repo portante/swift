@@ -23,7 +23,7 @@ from uuid import uuid4
 from swift.common.constraints import MAX_META_COUNT, MAX_META_NAME_LENGTH, \
     MAX_META_OVERALL_SIZE, MAX_META_VALUE_LENGTH
 
-from swift_testing import check_response, retry, skip, skip2, skip3, \
+from test.functional import check_response, retry, skip, skip2, skip3, \
     swift_test_perm, web_front_end
 
 
