@@ -34,42 +34,6 @@ from test.functional.swift_test_client import Account, Connection, File, \
     ResponseError
 
 
-def chunks(s, length=3):
-    i, j = 0, length
-    while i < len(s):
-        yield s[i:j]
-        i, j = j, j + length
-
-
-def timeout(seconds, method, *args, **kwargs):
-    class TimeoutThread(threading.Thread):
-        def __init__(self, method, *args, **kwargs):
-            threading.Thread.__init__(self)
-
-            self.method = method
-            self.args = args
-            self.kwargs = kwargs
-            self.exception = None
-
-        def run(self):
-            try:
-                self.method(*self.args, **self.kwargs)
-            except Exception as e:
-                self.exception = e
-
-    t = TimeoutThread(method, *args, **kwargs)
-    t.start()
-    t.join(seconds)
-
-    if t.exception:
-        raise t.exception
-
-    if t.isAlive():
-        t._Thread__stop()
-        return True
-    return False
-
-
 class Utils(object):
     @classmethod
     def create_ascii_name(cls, length=None):
@@ -1162,6 +1126,34 @@ class TestFile(Base):
         limit = load_constraint('max_file_size')
         tsecs = 3
 
+        def timeout(seconds, method, *args, **kwargs):
+            class TimeoutThread(threading.Thread):
+                def __init__(self, method, *args, **kwargs):
+                    threading.Thread.__init__(self)
+
+                    self.method = method
+                    self.args = args
+                    self.kwargs = kwargs
+                    self.exception = None
+
+                def run(self):
+                    try:
+                        self.method(*self.args, **self.kwargs)
+                    except Exception as e:
+                        self.exception = e
+
+            t = TimeoutThread(method, *args, **kwargs)
+            t.start()
+            t.join(seconds)
+
+            if t.exception:
+                raise t.exception
+
+            if t.isAlive():
+                t._Thread__stop()
+                return True
+            return False
+
         for i in (limit - 100, limit - 10, limit - 1, limit, limit + 1,
                   limit + 10, limit + 100):
 
@@ -1473,6 +1465,13 @@ class TestFile(Base):
         if (tf.web_front_end == 'apache2'):
             raise SkipTest("Chunked PUT can only be tested with apache2 web"
                            " front end")
+
+        def chunks(s, length=3):
+            i, j = 0, length
+            while i < len(s):
+                yield s[i:j]
+                i, j = j, j + length
+
         data = File.random_data(10000)
         etag = File.compute_md5sum(data)
 
