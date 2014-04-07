@@ -22,10 +22,10 @@ import locale
 import random
 import StringIO
 import time
-import threading
 import unittest
 import urllib
 import uuid
+from eventlet import Timeout
 from nose import SkipTest
 
 from test.functional import normalized_urls, load_constraint
@@ -1127,32 +1127,13 @@ class TestFile(Base):
         tsecs = 3
 
         def timeout(seconds, method, *args, **kwargs):
-            class TimeoutThread(threading.Thread):
-                def __init__(self, method, *args, **kwargs):
-                    threading.Thread.__init__(self)
-
-                    self.method = method
-                    self.args = args
-                    self.kwargs = kwargs
-                    self.exception = None
-
-                def run(self):
-                    try:
-                        self.method(*self.args, **self.kwargs)
-                    except Exception as e:
-                        self.exception = e
-
-            t = TimeoutThread(method, *args, **kwargs)
-            t.start()
-            t.join(seconds)
-
-            if t.exception:
-                raise t.exception
-
-            if t.isAlive():
-                t._Thread__stop()
+            try:
+                with Timeout(seconds):
+                    method(*self.args, **self.kwargs)
+            except Timeout:
                 return True
-            return False
+            else:
+                return False
 
         for i in (limit - 100, limit - 10, limit - 1, limit, limit + 1,
                   limit + 10, limit + 100):
